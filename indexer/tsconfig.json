@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+
+    "target": "ESNext",
+    "lib": ["ESNext"],
+
+    // Ponder requires bundler resolution for virtual modules (ponder:registry, ponder:schema)
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+
+    "isolatedModules": true,
+    "esModuleInterop": true,
+
+    "strict": true,
+    "noImplicitOverride": true,
+
+    "skipLibCheck": true
+  },
+  "include": ["src", "ponder-env.d.ts"]
+}

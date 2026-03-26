@@ -1,0 +1,28 @@
+{
+  "name": "foc-observer-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebuild": "cp ../shared/system-context.ts src/system-context.ts && cp ../indexer/src/schema-defs.ts src/schema-defs.ts && cp ../shared/table-metadata.ts src/table-metadata.ts",
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:live": "LIVE_TEST=1 vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.11",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "hono": "^4",
+    "pg": "^8.18.0",
+    "viem": "^2.47.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/pg": "^8.18.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

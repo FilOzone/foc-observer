@@ -1,0 +1,112 @@
+services:
+  # Lotus RPC proxy: the only container with host networking.
+  # Forwards to Lotus gateway/RPC processes on the host. Other containers
+  # reach it via the Docker bridge gateway (host.docker.internal:11234/11235).
+  # Not needed when using remote RPC endpoints, just start the other services.
+  lotus-proxy:
+    image: alpine/socat:latest
+    network_mode: host
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        socat TCP-LISTEN:11234,fork,reuseaddr TCP:${LOTUS_MAINNET_HOST:-127.0.0.1}:${LOTUS_MAINNET_PORT:-2234} &
+        socat TCP-LISTEN:11235,fork,reuseaddr TCP:${LOTUS_CALIBNET_HOST:-127.0.0.1}:${LOTUS_CALIBNET_PORT:-2235}
+    restart: unless-stopped
+
+  postgres-calibnet:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ponder
+      POSTGRES_USER: ponder
+      POSTGRES_PASSWORD: ponder
+    volumes:
+      - pgdata-calibnet:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ponder"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  postgres-mainnet:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ponder
+      POSTGRES_USER: ponder
+      POSTGRES_PASSWORD: ponder
+    volumes:
+      - pgdata-mainnet:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ponder"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  ponder-calibnet:
+    build: indexer
+    depends_on:
+      postgres-calibnet:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgres://ponder:ponder@postgres-calibnet:5432/ponder
+      DATABASE_SCHEMA: public
+      RPC_URL: ${CALIBNET_RPC_URL:?}
+      PORT: 17827
+    restart: unless-stopped
+    volumes:
+      - ./indexer/ponder.config.calibnet.ts:/app/ponder.config.ts
+      - ./indexer/ponder.schema.ts:/app/ponder.schema.ts
+      - ./indexer/src:/app/src
+      - ./indexer/abis:/app/abis
+
+  ponder-mainnet:
+    build: indexer
+    depends_on:
+      postgres-mainnet:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgres://ponder:ponder@postgres-mainnet:5432/ponder
+      DATABASE_SCHEMA: public
+      RPC_URL: ${MAINNET_RPC_URL:?}
+      PORT: 17828
+    volumes:
+      - ./indexer/ponder.config.mainnet.ts:/app/ponder.config.ts
+      - ./indexer/ponder.schema.ts:/app/ponder.schema.ts
+      - ./indexer/src:/app/src
+      - ./indexer/abis:/app/abis
+
+  foc-observer:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    depends_on:
+      postgres-calibnet:
+        condition: service_healthy
+      postgres-mainnet:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${FOC_SERVER_PORT:?}:${FOC_SERVER_PORT:?}"
+    environment:
+      FOC_SERVER_PORT: ${FOC_SERVER_PORT:?}
+      FOC_API_URL: ${FOC_API_URL:?}
+      FOC_CALIBNET_DATABASE_URL: postgres://ponder:ponder@postgres-calibnet:5432/ponder
+      FOC_CALIBNET_RPC_URL: ${CALIBNET_RPC_URL:?}
+      FOC_MAINNET_DATABASE_URL: postgres://ponder:ponder@postgres-mainnet:5432/ponder
+      FOC_MAINNET_RPC_URL: ${MAINNET_RPC_URL:?}
+      BETTERSTACK_CH_USER: ${BETTERSTACK_CH_USER:-}
+      BETTERSTACK_CH_PASSWORD: ${BETTERSTACK_CH_PASSWORD:-}
+    restart: unless-stopped
+
+volumes:
+  pgdata-calibnet:
+    name: ponder_pgdata-calibnet
+    external: true
+  pgdata-mainnet:
+    name: ponder_pgdata-mainnet
+    external: true

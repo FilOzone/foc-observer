@@ -1,0 +1,44 @@
+{
+  "name": "@filoz/foc-observer",
+  "version": "1.0.0",
+  "description": "MCP stdio server and CLI for querying FOC (Filecoin Onchain Cloud) historical and live chain data and DealBot data.",
+  "author": "Rod Vagg <rod@vagg.org>",
+  "license": "Apache-2.0 OR MIT",
+  "type": "module",
+  "bin": {
+    "foc-observer": "./dist/cli.js"
+  },
+  "keywords": [
+    "filecoin",
+    "foc",
+    "mcp",
+    "observability"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FilOzone/foc-observer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FilOzone/foc-observer/issues"
+  },
+  "homepage": "https://github.com/FilOzone/foc-observer",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:live": "LIVE_TEST=1 vitest run"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "commander": "^14.0.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

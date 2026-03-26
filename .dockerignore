@@ -1,0 +1,19 @@
+# Root .dockerignore, used by server/Dockerfile (context is foc-observer root)
+node_modules
+**/node_modules
+**/dist
+**/.env
+**/.env.local
+.claude
+.git
+
+# Only server/, shared/, and indexer/src/schema-defs.ts needed for server build
+client/
+filecoin-pay-explorer/
+indexer/abis/
+indexer/scripts/
+indexer/Dockerfile
+indexer/ponder.config*.ts
+indexer/ponder.schema.ts
+indexer/package.json
+indexer/tsconfig.json

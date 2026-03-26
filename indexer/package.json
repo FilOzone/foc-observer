@@ -1,0 +1,20 @@
+{
+  "name": "ponder-filecoin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ponder dev",
+    "start": "ponder start",
+    "codegen": "ponder codegen",
+    "generate-abis": "./scripts/generate-abis.sh"
+  },
+  "dependencies": {
+    "hono": "^4",
+    "multiformats": "^13",
+    "ponder": "^0.9",
+    "viem": "^2.23"
+  },
+  "devDependencies": {
+    "typescript": "^5.7"
+  }
+}
