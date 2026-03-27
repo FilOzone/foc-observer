@@ -12,39 +12,41 @@ Public API endpoint URL isn't shared here, you'll either need to run your own fr
 
 ## Quick Start
 
-### Remote MCP (zero install)
+### Remote MCP (zero install, recommended)
 
-Any MCP client that supports Streamable HTTP transport can connect directly:
+Any MCP client that supports Streamable HTTP transport can connect directly, no npm install needed:
 
 ```
 https://your-server.example.com/mcp
 ```
 
-The agent gets 20 tools with embedded domain knowledge about the FOC protocol.
+20 tools with embedded FOC protocol knowledge.
+
+**Claude Code** (streamable HTTP):
+```bash
+# Project-local (default)
+claude mcp add --transport http foc-observer https://your-server.example.com/mcp
+
+# Shared with all projects
+claude mcp add --transport http --scope user foc-observer https://your-server.example.com/mcp
+```
+
+**Claude.ai**: Add as a connector in Settings > Connectors with the `/mcp` URL.
 
 ### Stdio MCP (via npm package)
 
-For MCP clients that use stdio transport (most local agent environments):
+For MCP clients that only support stdio transport:
 
 ```bash
 npx @filoz/foc-observer serve --api-url https://your-server.example.com
 ```
 
-Or install globally:
-
+**Claude Code** (stdio):
 ```bash
-npm install -g @filoz/foc-observer
-foc-observer serve --api-url https://your-server.example.com
+claude mcp add --transport stdio foc-observer -- npx @filoz/foc-observer serve --api-url https://your-server.example.com
 ```
 
-**Example: Claude Code**
-```bash
-claude mcp add --transport stdio foc-observer -- foc-observer serve --api-url https://your-server.example.com
-```
-
-**Example: Claude Desktop / Cursor / other MCP hosts**
-
-Add to your MCP configuration (e.g. `claude_desktop_config.json`):
+**Claude Desktop / Cursor / other MCP hosts**, add to your MCP config (e.g. `claude_desktop_config.json`):
 
 ```json
 {
@@ -56,6 +58,16 @@ Add to your MCP configuration (e.g. `claude_desktop_config.json`):
   }
 }
 ```
+
+### Scope (Claude Code)
+
+- `--scope local` (default): available only to you in the current project
+- `--scope project`: shared with everyone via `.mcp.json` (checked into repo)
+- `--scope user`: available to you across all projects
+
+### Other MCP clients
+
+Works with any [MCP-compatible client](https://modelcontextprotocol.io/clients); Cursor, Cline, Gemini CLI, Amazon Q, goose, ChatGPT, JetBrains AI, LM Studio, and many more. Use the HTTP endpoint for clients that support Streamable HTTP, or the stdio proxy via `npx @filoz/foc-observer serve` for the rest. See the [client package README](client/README.md) for a compatibility table.
 
 ### REST API
 

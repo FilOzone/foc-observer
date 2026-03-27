@@ -321,6 +321,8 @@ The current FOC contracts (same proxy addresses) were deployed across two releas
 - Added: USDFC sybil fee on data set creation (0.1 USDFC per data set, replaces 0.1 FIL proof fee). Fee flows through a temporary burn rail into the FilecoinPay auction pool. PDPVerifier whitelisted to skip the old 0.1 FIL fee. PDPVerifier getActivePiecesByCursor for paginated piece queries.
 - Impact on fee auction: pool now grows by 0.1 USDFC per data set creation (dominant source), not just settlement trickle.
 
+To query upgrade history: SELECT contract, version, implementation, TO_TIMESTAMP(timestamp) as upgraded_at FROM contract_upgraded ORDER BY block_number. This shared table covers PDPVerifier, FWSS, and SPRegistry upgrades.
+
 **Earlier deployments (v0.2.0, v0.3.0)** used different proxy addresses and are not indexed. Data from those deployments is not available.
 
 When interpreting data: events before ~epoch 3,414,500 (calibnet) / ~5,476,400 (mainnet) were under v1.0.0 semantics. Events after are under v1.1.0. v1.2.0 added the sybil fee mechanism - data sets created after v1.2.0 deposit 0.1 USDFC into the auction pool.

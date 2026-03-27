@@ -8,29 +8,33 @@ Also note that the public endpoint also has a streaming MCP server so this packa
 
 ## Quick Start
 
-### Stdio MCP (any MCP-compatible agent)
+### Option 1: Remote MCP (recommended, zero install)
+
+If your MCP client supports Streamable HTTP transport, you don't need this package at all -- connect directly to the server:
+
+```
+https://your-server.example.com/mcp
+```
+
+**Claude Code:**
+```bash
+claude mcp add --transport http foc-observer https://your-server.example.com/mcp
+```
+
+### Option 2: Stdio MCP (via this package)
+
+For MCP clients that only support stdio transport, this package proxies to the remote server:
 
 ```bash
 npx @filoz/foc-observer serve --api-url https://your-server.example.com
 ```
 
-Or install globally:
-
-```bash
-npm install -g @filoz/foc-observer
-foc-observer serve --api-url https://your-server.example.com
-```
-
-Register with your MCP host as a stdio server. Examples:
-
 **Claude Code:**
 ```bash
-claude mcp add --transport stdio foc-observer -- foc-observer serve --api-url https://your-server.example.com
+claude mcp add --transport stdio foc-observer -- npx @filoz/foc-observer serve --api-url https://your-server.example.com
 ```
 
-**Claude Desktop / Cursor / other MCP hosts:**
-
-Add to your MCP configuration (e.g. `claude_desktop_config.json`):
+**Claude Desktop / Cursor / Cline / Windsurf / other MCP hosts** -- add to your MCP config:
 ```json
 {
   "mcpServers": {
@@ -42,13 +46,24 @@ Add to your MCP configuration (e.g. `claude_desktop_config.json`):
 }
 ```
 
-### Remote MCP (zero install)
+### Compatibility
 
-MCP clients that support Streamable HTTP transport can connect directly to the server endpoint without this package:
+This package works with any [MCP-compatible client](https://modelcontextprotocol.io/clients). The remote HTTP endpoint (`/mcp`) works with clients that support Streamable HTTP transport. The stdio proxy (`serve` command) works with all clients. Tested with:
 
-```
-https://your-server.example.com/mcp
-```
+| Client | Transport | Notes |
+|--------|-----------|-------|
+| Claude Code | HTTP or stdio | `claude mcp add --transport http` recommended |
+| Claude.ai | HTTP | Add as connector in Settings |
+| Claude Desktop | stdio | Via `claude_desktop_config.json` |
+| Cursor | stdio | Via MCP settings |
+| Cline (VS Code) | stdio | Via MCP config |
+| Gemini CLI | stdio | Via `settings.json` |
+| Amazon Q CLI | stdio | Via MCP config |
+| goose | stdio or HTTP | Via `~/.config/goose/config.yaml` |
+| ChatGPT | HTTP | Via developer mode MCP |
+| JetBrains AI | stdio | Via IDE settings |
+
+Any client not listed should work via either transport -- MCP is an open standard.
 
 ## How It Works
 
