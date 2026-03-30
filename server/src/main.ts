@@ -17,6 +17,7 @@ import { createRoutes } from "./routes.js"
 import { createMcpServer } from "./mcp-handler.js"
 import { ALL_NETWORKS, getNetworkConfig, type NetworkName } from "./networks.js"
 import { logStartup } from "./logger.js"
+import { initParser } from "./sql-validator.js"
 
 const PORT = Number(process.env.FOC_SERVER_PORT ?? 17824)
 
@@ -60,6 +61,7 @@ app.all("/mcp", async (c) => {
   return response
 })
 
+await initParser()
 logStartup(PORT, ALL_NETWORKS, !!betterstack)
 console.log(`foc-observer server starting on port ${PORT}`)
 

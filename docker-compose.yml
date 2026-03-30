@@ -103,7 +103,7 @@ services:
       BETTERSTACK_CH_PASSWORD: ${BETTERSTACK_CH_PASSWORD:-}
       FOC_LOG_PATH: /data/logs/foc-observer.jsonl
     volumes:
-      - foc-logs:/data/logs
+      - ./logs:/data/logs
     logging:
       driver: json-file
       options:
@@ -118,4 +118,3 @@ volumes:
   pgdata-mainnet:
     name: ponder_pgdata-mainnet
     external: true
-  foc-logs:

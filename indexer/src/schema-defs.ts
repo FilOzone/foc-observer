@@ -178,7 +178,7 @@ export const TABLES: Record<string, TableDef> = {
       cacheMissRailId: { type: "bigint" },
       cdnRailId: { type: "bigint" },
     },
-    indexes: ["dataSetId", "pdpRailId", "timestamp"],
+    indexes: ["dataSetId", "pdpRailId", "caller", "timestamp"],
   },
   fwss_pricing_updated: {
     description: "Global storage pricing change",
@@ -255,6 +255,7 @@ export const TABLES: Record<string, TableDef> = {
       version: { type: "text" },
       implementation: { type: "hex" },
     },
+    indexes: ["contract", "blockNumber"],
   },
 
   // -- FilecoinPay --

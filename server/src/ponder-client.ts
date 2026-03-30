@@ -1,11 +1,12 @@
 /**
  * Client for querying Ponder-indexed FOC data.
- * SQL queries go directly to Postgres (more capable, no function whitelist).
- * GraphQL queries go to Ponder's HTTP API.
+ * SQL queries go directly to Postgres in a READ ONLY transaction.
+ * Validation is handled by sql-validator.ts (libpg-query AST allow-list).
  */
 
 import pg from "pg"
 import type { NetworkConfig } from "./networks.js"
+import { validateSql, MAX_ROWS } from "./sql-validator.js"
 
 export interface SqlResult {
   columns: string[]
@@ -36,73 +37,14 @@ export class PonderClient {
     this.pool = new pg.Pool({
       connectionString: network.databaseUrl,
       max: 5,
-      statement_timeout: 120_000,
+      statement_timeout: 30_000,
     })
   }
 
-  static readonly MAX_ROWS = 10000
+  /** @deprecated Use validateSql from sql-validator.ts directly */
+  static validateSql = validateSql
 
-  static validateSql(sql: string): void {
-    // Strip BOM and normalize whitespace
-    const trimmed = sql.replace(/^\uFEFF/, "").trim().toUpperCase()
-
-    // Block multiple statements (semicolons outside string literals)
-    // Simple check: reject any semicolon. SQL queries don't need them for single statements.
-    if (trimmed.includes(";")) {
-      throw new Error("Multiple statements are not allowed. Remove semicolons.")
-    }
-
-    if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("WITH") && !trimmed.startsWith("EXPLAIN")) {
-      throw new Error("Only SELECT, WITH, and EXPLAIN queries are allowed.")
-    }
-    if (trimmed.startsWith("EXPLAIN") && trimmed.includes("ANALYZE")) {
-      throw new Error("EXPLAIN ANALYZE is not allowed.")
-    }
-
-    // Block access to Postgres system catalogs, metadata views, and sensitive objects
-    const blockedTerms = [
-      // Auth and credentials
-      "PG_SHADOW", "PG_AUTHID", "PG_AUTH_MEMBERS", "PG_ROLES", "PG_USER",
-      "PG_GROUP", "PG_USER_MAPPING",
-      // Server config and files
-      "PG_SETTINGS", "PG_CONFIG", "PG_FILE_SETTINGS",
-      "PG_HBA_FILE_RULES", "PG_IDENT_FILE_MAPPINGS",
-      // System catalogs
-      "PG_CATALOG", "INFORMATION_SCHEMA",
-      "PG_DATABASE", "PG_TABLESPACE", "PG_EXTENSION", "PG_PROC",
-      "PG_TABLES", "PG_VIEWS", "PG_INDEXES",
-      // Runtime state
-      "PG_STAT_ACTIVITY", "PG_STAT_SSL", "PG_STAT_GSSAPI",
-      "PG_STAT_REPLICATION", "PG_STAT_WAL",
-      "PG_LOCKS", "PG_PREPARED_STATEMENTS", "PG_CURSORS",
-      // Shared memory (new in PG18)
-      "PG_SHMEM_ALLOCATIONS",
-      // Replication
-      "PG_REPLICATION_ORIGIN", "PG_REPLICATION_SLOTS",
-      // Large objects
-      "PG_LARGEOBJECT",
-    ]
-    for (const term of blockedTerms) {
-      if (trimmed.includes(term)) {
-        throw new Error(`Access to ${term.toLowerCase()} is not allowed.`)
-      }
-    }
-
-    // Block dangerous superuser functions
-    const blockedFunctions = [
-      "PG_READ_FILE", "PG_READ_BINARY_FILE", "PG_STAT_FILE",
-      "PG_LS_DIR", "PG_LS_LOGDIR", "PG_LS_WALDIR", "PG_LS_TMPDIR",
-      "LO_IMPORT", "LO_EXPORT", "LO_GET", "LO_PUT",
-      "PG_TERMINATE_BACKEND", "PG_CANCEL_BACKEND", "PG_RELOAD_CONF",
-      "COPY ", "SET ROLE", "SET SESSION",
-      "PG_SLEEP",
-    ]
-    for (const fn of blockedFunctions) {
-      if (trimmed.includes(fn)) {
-        throw new Error(`Function ${fn.toLowerCase().trim()} is not allowed.`)
-      }
-    }
-  }
+  static readonly MAX_ROWS = MAX_ROWS
 
   /** Internal query, bypasses validation, used by listTables/describeTable */
   private async queryRaw(sql: string): Promise<pg.QueryResult> {
@@ -116,21 +58,37 @@ export class PonderClient {
   }
 
   async querySql(sql: string): Promise<SqlResult> {
-    PonderClient.validateSql(sql)
+    const { isExplain } = validateSql(sql)
 
     const client = await this.pool.connect()
     try {
       await client.query("BEGIN TRANSACTION READ ONLY")
       await client.query("SET LOCAL search_path TO public")
-      const result = await client.query(sql)
+
+      let result: pg.QueryResult
+
+      if (isExplain) {
+        // EXPLAIN returns a query plan, not data rows. No cursor needed
+        // (and DECLARE CURSOR FOR EXPLAIN is a Postgres syntax error).
+        result = await client.query(sql)
+      } else {
+        // Use a cursor to cap memory usage. Without this, a query returning
+        // millions of rows would buffer everything in Node.js memory before we
+        // could truncate. The cursor fetches at most MAX_ROWS + 1 rows from
+        // Postgres, detecting truncation without unbounded allocation.
+        const fetchLimit = MAX_ROWS + 1
+        await client.query(`DECLARE _foc_cursor NO SCROLL CURSOR FOR (${sql})`)
+        result = await client.query(`FETCH ${fetchLimit} FROM _foc_cursor`)
+        await client.query("CLOSE _foc_cursor")
+      }
+
       await client.query("COMMIT")
 
       const columns = result.fields.map((f) => f.name)
       let rows = result.rows as Record<string, unknown>[]
-      const totalRows = rows.length
-      const truncated = totalRows > PonderClient.MAX_ROWS
+      const truncated = !isExplain && rows.length > MAX_ROWS
       if (truncated) {
-        rows = rows.slice(0, PonderClient.MAX_ROWS)
+        rows = rows.slice(0, MAX_ROWS)
       }
 
       for (const row of rows) {
@@ -145,7 +103,7 @@ export class PonderClient {
         columns,
         rows,
         rowCount: rows.length,
-        ...(truncated ? { truncated: true, totalRows } : {}),
+        ...(truncated ? { truncated: true, message: `Results capped at ${MAX_ROWS} rows.` } : {}),
       } as SqlResult
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {})
