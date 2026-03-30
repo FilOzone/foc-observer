@@ -12,6 +12,6 @@ COPY indexer/src/schema-defs.ts ./src/schema-defs.ts
 COPY server/src/ ./src/
 RUN npx tsc
 
-RUN chown -R node:node /app
+RUN mkdir -p /data/logs && chown -R node:node /app /data
 USER node
 CMD ["node", "dist/main.js"]

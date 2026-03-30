@@ -16,6 +16,7 @@ import type { BetterStackClient } from "./betterstack-client.js"
 import type { SubgraphClient } from "./subgraph-client.js"
 import { resolveSystemContext } from "./system-context.js"
 import type { NetworkName } from "./networks.js"
+import { logMcp, logSql } from "./logger.js"
 
 const networkEnum = z.enum(["calibnet", "mainnet"]).describe(
   "Which Filecoin network to query. Calibnet is the test network (high proving frequency, test data). Mainnet is production (real money, real storage providers).",
@@ -39,6 +40,29 @@ function toolError(err: unknown) {
   return {
     content: [{ type: "text" as const, text: `Error: ${sanitizeError(err)}` }],
     isError: true as const,
+  }
+}
+
+/** Wrap a tool handler to log timing, params, and result metadata. */
+function logged<P extends Record<string, unknown>>(
+  toolName: string,
+  handler: (params: P) => Promise<ReturnType<typeof toolResult> | ReturnType<typeof toolError>>,
+): (params: P) => Promise<ReturnType<typeof toolResult> | ReturnType<typeof toolError>> {
+  return async (params: P) => {
+    const start = Date.now()
+    try {
+      const result = await handler(params)
+      const durationMs = Date.now() - start
+      const text = result.content[0]?.text ?? ""
+      const opts: { resultChars: number; error?: string } = { resultChars: text.length }
+      if ("isError" in result && result.isError) opts.error = text
+      logMcp(toolName, params as Record<string, unknown>, durationMs, opts)
+      return result
+    } catch (err) {
+      const durationMs = Date.now() - start
+      logMcp(toolName, params as Record<string, unknown>, durationMs, { error: sanitizeError(err) })
+      return toolError(err)
+    }
   }
 }
 
@@ -78,7 +102,7 @@ export function createMcpServer(
 After calling this, you can use the other tools. Most tools require i_have_read_the_system_context: true to confirm you have loaded this context.
 
 Call this exactly once at the start of your work. Do not skip it.`,
-  }, async () => toolResult(systemContext))
+  }, logged("get_system_context", async () => toolResult(systemContext)))
 
   // -- Ponder SQL tools --
 
@@ -94,47 +118,49 @@ ${formatTableList()}
 Key joins: fwss tables use data_set_id, pdp tables use set_id, these are the same value (JOIN fwss.data_set_id = pdp.set_id). rail_id across fp tables. Link rails to datasets: JOIN fwss_data_set_created.pdp_rail_id = fp_rail_settled.rail_id. Provider names: call get_providers first, then JOIN by provider_id.
 Amounts are bigint (18 decimals). Gas cost in FIL = gas_used * effective_gas_price / 1e18.`,
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, sql: z.string().describe("SQL SELECT query to execute") },
-  }, async ({ network, sql }) => {
+  }, logged("query_sql", async ({ network, sql }) => {
     const sqlStart = Date.now()
-    console.log(`MCP SQL [${network}]: ${sql.slice(0, 200)}${sql.length > 200 ? "..." : ""}`)
     try {
       const result = await getPonder(network).querySql(sql)
-      console.log(`MCP SQL OK [${network}]: ${result.rowCount} rows, ${Date.now() - sqlStart}ms`)
+      logSql("mcp", network, sql, Date.now() - sqlStart, { rowCount: result.rowCount })
       return toolResult({ network, ...result })
-    } catch (err) { return toolError(err) }
-  })
+    } catch (err) {
+      logSql("mcp", network, sql, Date.now() - sqlStart, { error: sanitizeError(err) })
+      return toolError(err)
+    }
+  }))
 
   server.registerTool("list_tables", {
     description: "List all FOC event tables with row counts and descriptions. Tables prefixed by contract: pdp_, fwss_, fp_, spr_, skr_.",
     inputSchema: { network: networkEnum },
-  }, async ({ network }) => {
+  }, logged("list_tables", async ({ network }) => {
     try {
       const tables = await getPonder(network).listTables()
       return toolResult({ network, tables })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("describe_table", {
     description: "Get column names, types, and nullability for a specific FOC event table.",
     inputSchema: { network: networkEnum, table: z.string().describe("Table name, e.g. 'fwss_fault_record'") },
-  }, async ({ network, table }) => {
+  }, logged("describe_table", async ({ network, table }) => {
     try {
       const columns = await getPonder(network).describeTable(table)
       if (columns.length === 0) return toolResult({ network, error: `Table "${table}" not found.` })
       return toolResult({ network, table, columns })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_status", {
     description: "Check connectivity and report which networks are available with table counts and row totals.",
-  }, async () => {
+  }, logged("get_status", async () => {
     try {
       const statuses = await Promise.all(
         [...ponderClients.values()].map((c) => c.getStatus()),
       )
       return toolResult(statuses)
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   // -- Contract state tools --
 
@@ -144,62 +170,62 @@ Amounts are bigint (18 decimals). Gas cost in FIL = gas_used * effective_gas_pri
 Three tiers: registered (isActive) < approved (isApproved, passes DealBot checks) < endorsed (isEndorsed, curated primary copy targets).
 Call this for provider name resolution instead of calling get_provider repeatedly.`,
     inputSchema: { network: networkEnum },
-  }, async ({ network }) => {
+  }, logged("get_providers", async ({ network }) => {
     try {
       const providers = await getReader(network).getAllProviders()
       return toolResult({ network, providers })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_provider", {
     description: 'Look up a single storage provider by ID. Prefer get_providers for bulk lookups. Show as "Name (ID)".',
     inputSchema: { network: networkEnum, providerId: z.string().describe("Provider ID, e.g. '6'") },
-  }, async ({ network, providerId }) => {
+  }, logged("get_provider", async ({ network, providerId }) => {
     try {
       const provider = await getReader(network).getProvider(BigInt(providerId))
       return toolResult({ network, ...provider })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_dataset", {
     description: "Look up a FWSS dataset's current state. Returns rails, payer/payee, termination status, and metadata (source, withCDN).",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, dataSetId: z.string().describe("Dataset ID, e.g. '11141'") },
-  }, async ({ network, dataSetId }) => {
+  }, logged("get_dataset", async ({ network, dataSetId }) => {
     try {
       const dataset = await getReader(network).getDataset(BigInt(dataSetId))
       return toolResult({ network, ...dataset })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_dataset_proving", {
     description: "Check live proving status of a dataset. Returns: live, provenThisPeriod, deadline, lastProvenEpoch, leafCount, activePieceCount.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, dataSetId: z.string().describe("Dataset ID, e.g. '11141'") },
-  }, async ({ network, dataSetId }) => {
+  }, logged("get_dataset_proving", async ({ network, dataSetId }) => {
     try {
       const proving = await getReader(network).getDatasetProving(BigInt(dataSetId))
       return toolResult({ network, ...proving })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_rail", {
     description: "Look up a FilecoinPay payment rail. Returns rate, lockup, settlement position, termination status.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, railId: z.string().describe("Rail ID, e.g. '100'") },
-  }, async ({ network, railId }) => {
+  }, logged("get_rail", async ({ network, railId }) => {
     try {
       const rail = await getReader(network).getRail(BigInt(railId))
       return toolResult({ network, ...rail })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_pricing", {
     description: "Get current FWSS storage pricing. Returns storage price per TiB/month and minimum rate, formatted and raw.",
     inputSchema: { network: networkEnum },
-  }, async ({ network }) => {
+  }, logged("get_pricing", async ({ network }) => {
     try {
       const pricing = await getReader(network).getPricing()
       return toolResult({ network, ...pricing })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_auction", {
     description: `Get the current fee auction status for a token in FilecoinPay.
@@ -215,12 +241,12 @@ Historical auction completions are in the fp_burn_for_fees table (query_sql). Th
       network: networkEnum,
       token: z.string().describe("Token contract address (typically USDFC)"),
     },
-  }, async ({ network, token }) => {
+  }, logged("get_auction", async ({ network, token }) => {
     try {
       const auction = await getReader(network).getAuctionStatus(token as `0x${string}`)
       return toolResult({ network, ...auction })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_account", {
     description: `Look up a FilecoinPay account's balance and solvency status. Returns current funds, lockup obligations, available (withdrawable) funds, and the epoch until which the account is funded.
@@ -242,7 +268,7 @@ Key fields:
       token: z.string().describe("Token contract address (USDFC or 0x0 for FIL)"),
       owner: z.string().describe("Account owner address (0x...)"),
     },
-  }, async ({ network, token, owner }) => {
+  }, logged("get_account", async ({ network, token, owner }) => {
     try {
       const account = await getReader(network).getAccount(
         token as `0x${string}`,
@@ -250,7 +276,7 @@ Key fields:
       )
       return toolResult({ network, ...account })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   // -- DealBot tools --
 
@@ -267,14 +293,14 @@ Supports flexible time windows (quantized to: 1h, 6h, 12h, 24h, 72h, 7d, 30d, 90
       network: networkEnum,
       hours: z.number().describe("Time window in hours (default 72). Quantized to nearest tier.").default(72),
     },
-  }, async ({ network, hours }) => {
+  }, logged("get_dealbot_stats", async ({ network, hours }) => {
     if (betterstack?.isConfigured()) {
       try { return toolResult(await betterstack.getNetworkStats(network, hours)) }
       catch (err) { return toolError(err) }
     }
     try { return toolResult(await dealbot.getNetworkStats(network)) }
     catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_dealbot_providers", {
     description: `All providers with deal and IPFS retrieval metrics from BetterStack Prometheus data (DealBot test results). Does NOT include retention/proving fault data, use get_proving_health for that.
@@ -287,7 +313,7 @@ Default: 72h window (~288 deal checks, exceeds 200-check SLA minimum). Use hours
       network: networkEnum,
       hours: z.number().describe("Time window in hours (default 72)").default(72),
     },
-  }, async ({ network, hours }) => {
+  }, logged("get_dealbot_providers", async ({ network, hours }) => {
     if (betterstack?.isConfigured()) {
       try {
         const providers = await betterstack.getProviderMetrics(network, hours)
@@ -296,7 +322,7 @@ Default: 72h window (~288 deal checks, exceeds 200-check SLA minimum). Use hours
     }
     try { return toolResult(await dealbot.getProviderMetrics(network)) }
     catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_dealbot_provider_detail", {
     description: `Single provider deal and IPFS retrieval metrics from BetterStack Prometheus data. Use providerId (integer) from get_providers. Does NOT include retention/proving, use get_proving_health for that.
@@ -308,7 +334,7 @@ Returns: same fields as get_dealbot_providers but for one provider. Use hours=72
       providerId: z.string().describe("Provider ID (integer), e.g. '6'"),
       hours: z.number().describe("Time window in hours (default 72)").default(72),
     },
-  }, async ({ network, providerId, hours }) => {
+  }, logged("get_dealbot_provider_detail", async ({ network, providerId, hours }) => {
     if (betterstack?.isConfigured()) {
       try {
         const detail = await betterstack.getProviderDetail(network, providerId, hours)
@@ -317,7 +343,7 @@ Returns: same fields as get_dealbot_providers but for one provider. Use hours=72
       } catch (err) { return toolError(err) }
     }
     return toolError(new Error("BetterStack not configured and DealBot provider detail requires EVM address, not providerId. Use get_providers to find the address."))
-  })
+  }))
 
   server.registerTool("get_dealbot_daily", {
     description: `Daily deal and IPFS retrieval time-series from BetterStack Prometheus data. Returns per-day buckets with deal/retrieval counts and rates per provider.
@@ -328,7 +354,7 @@ Use for trend analysis, regression detection, provider dropoff tracking. Does NO
       network: networkEnum,
       days: z.number().describe("Days to look back (default 7)").default(7),
     },
-  }, async ({ network, days }) => {
+  }, logged("get_dealbot_daily", async ({ network, days }) => {
     if (betterstack?.isConfigured()) {
       try {
         const data = await betterstack.getTimeSeries(network, days * 24, 24)
@@ -337,14 +363,14 @@ Use for trend analysis, regression detection, provider dropoff tracking. Does NO
     }
     try { return toolResult(await dealbot.getDailyMetrics(network, days)) }
     catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_dealbot_failures", {
     description: `DealBot failure analysis from DealBot's own REST API (not BetterStack). Returns common deal and retrieval errors with affected providers.
 
 Data source: DealBot NestJS backend database at dealbot.filoz.org (mainnet) / staging.dealbot.filoz.org (calibnet). Error categories: "fetch failed" = SP unreachable, 502 = backend down, "LockupNotSettledRateChangeNotAllowed" = payment contract issue.`,
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum },
-  }, async ({ network }) => {
+  }, logged("get_dealbot_failures", async ({ network }) => {
     try {
       const [deals, retrievals] = await Promise.all([
         dealbot.getFailedDealsSummary(network),
@@ -352,7 +378,7 @@ Data source: DealBot NestJS backend database at dealbot.filoz.org (mainnet) / st
       ])
       return toolResult({ network, dealFailures: deals, retrievalFailures: retrievals })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   // -- Proving health tools (PDP Explorer subgraph) --
 
@@ -376,14 +402,14 @@ Use this for:
       address: z.string().describe("Provider's EVM address (0x...). Get from get_providers."),
       weeks: z.number().describe("Weeks of activity history (default 4)").default(4),
     },
-  }, async ({ network, address, weeks }) => {
+  }, logged("get_proving_health", async ({ network, address, weeks }) => {
     if (!subgraph) return toolError(new Error("Subgraph client not configured"))
     try {
       const health = await subgraph.getProviderProvingHealth(network, address, weeks)
       if (!health) return toolResult({ network, error: `Provider "${address}" not found in PDP subgraph.` })
       return toolResult({ network, ...health })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   server.registerTool("get_proving_dataset", {
     description: `Get proving status for a single dataset from the PDP Explorer subgraph. Returns: isActive, provenThisPeriod, nextDeadline, totalFaultedPeriods, totalProofs, leafCount.
@@ -394,14 +420,14 @@ Uses the dataset's setId (same as dataSetId in FWSS). The subgraph tracks all pr
       network: networkEnum,
       dataSetId: z.string().describe("Dataset ID (integer), e.g. '11141'"),
     },
-  }, async ({ network, dataSetId }) => {
+  }, logged("get_proving_dataset", async ({ network, dataSetId }) => {
     if (!subgraph) return toolError(new Error("Subgraph client not configured"))
     try {
       const dataset = await subgraph.getDataset(network, dataSetId)
       if (!dataset) return toolResult({ network, error: `Dataset "${dataSetId}" not found in PDP subgraph.` })
       return toolResult({ network, ...dataset })
     } catch (err) { return toolError(err) }
-  })
+  }))
 
   return server
 }

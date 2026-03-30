@@ -122,6 +122,8 @@ A rail is a payment channel: payer -> payee, managed by an operator, optionally 
 
 **Rate changes**: Create segments in a queue. Settlement processes each segment with the rate that applied during that time period. Adding pieces triggers immediate rate increase. Removing pieces defers rate decrease to next proving period boundary.
 
+**Piece removal is deferred**: When pieces are removed, they are scheduled for deletion but remain in the dataset until the next nextProvingPeriod call. This is because proofs can challenge any piece in the current period, you can't remove data mid-period. pdp_pieces_removed records the scheduling; the actual deletion happens at the next proving boundary. leafCount only decreases at that point.
+
 **Terminated but not finalized**: After termination, the rail is still "active" in the sense that settlement continues during the lockup period. The SP must keep proving. Only after full settlement does finalization zero out the rail data.
 
 ## FWSS Data Sets
@@ -362,6 +364,8 @@ Each tool gets its data from a specific upstream source. When explaining results
 - Calculation: faultRate = totalFaultedPeriods / totalProvingPeriods * 100. This counts actual distinct missed periods, not consecutive-miss counts like on-chain periodsFaulted.
 - Endpoint: calibnet at api.goldsky.com/.../pdp-explorer/calibration311a/gn, mainnet at .../mainnet311b/gn.
 - Limitation: All-time aggregates only (no time-windowed queries). Weekly/monthly breakdowns are pre-aggregated by the subgraph.
+- Known issue: the subgraph overcounts "active" proof sets by ~35%, empty datasets (leafCount=0) and stale datasets (deadline far behind current block) are still marked isActive=true. For accurate active dataset counts, filter for leafCount > 0 and recent nextDeadline.
+- Terminology: totalProvingPeriods and totalFaultedPeriods count PROVING PERIODS, not individual challenges. Each proving period has 5 challenges, but the subgraph aggregates at the period level. Do not multiply by 5.
 
 ## DealBot Quality Assurance
 

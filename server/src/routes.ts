@@ -13,6 +13,7 @@ import { DealbotClient } from "./dealbot-client.js"
 import { BetterStackClient, parseBucket } from "./betterstack-client.js"
 import { SubgraphClient } from "./subgraph-client.js"
 import type { NetworkName } from "./networks.js"
+import { logRest, logSql } from "./logger.js"
 
 interface Backends {
   ponderClients: Map<NetworkName, PonderClient>
@@ -42,8 +43,7 @@ export function createRoutes(backends: Backends): Hono {
     const start = Date.now()
     await next()
     const ms = Date.now() - start
-    const status = c.res.status
-    console.log(`${c.req.method} ${c.req.path} ${status} ${ms}ms`)
+    logRest(c.req.method, c.req.path, c.res.status, ms)
   })
 
   function getPonder(network: string): { ponder: PonderClient; network: NetworkName } | { error: string } {
@@ -80,13 +80,12 @@ export function createRoutes(backends: Backends): Hono {
     const ctx = getPonder(body.network ?? "")
     if ("error" in ctx) return c.json(ctx, 400)
     const sqlStart = Date.now()
-    console.log(`SQL [${ctx.network}]: ${body.sql.slice(0, 200)}${body.sql.length > 200 ? "..." : ""}`)
     try {
       const result = await ctx.ponder.querySql(body.sql)
-      console.log(`SQL OK [${ctx.network}]: ${result.rowCount} rows, ${Date.now() - sqlStart}ms`)
+      logSql("rest", ctx.network, body.sql, Date.now() - sqlStart, { rowCount: result.rowCount })
       return c.json({ network: ctx.network, ...result })
     } catch (err) {
-      console.log(`SQL ERROR [${ctx.network}]: ${sanitizeError(err)} (${Date.now() - sqlStart}ms)`)
+      logSql("rest", ctx.network, body.sql, Date.now() - sqlStart, { error: sanitizeError(err) })
       return c.json({ network: ctx.network, error: sanitizeError(err) }, 400)
     }
   })

@@ -28,9 +28,9 @@ describe("camelToSnake via formatTableList", () => {
   })
 
   test("includes notes", () => {
-    expect(output).toContain("-- USDFC/epoch, 18 dec")
-    expect(output).toContain("-- CID string")
-    expect(output).toContain("-- JSON")
+    expect(output).toContain(": USDFC/epoch, 18 dec")
+    expect(output).toContain(": CID string")
+    expect(output).toContain(": JSON")
   })
 
   test("includes descriptions", () => {

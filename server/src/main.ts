@@ -16,6 +16,7 @@ import { SubgraphClient } from "./subgraph-client.js"
 import { createRoutes } from "./routes.js"
 import { createMcpServer } from "./mcp-handler.js"
 import { ALL_NETWORKS, getNetworkConfig, type NetworkName } from "./networks.js"
+import { logStartup } from "./logger.js"
 
 const PORT = Number(process.env.FOC_SERVER_PORT ?? 17824)
 
@@ -59,6 +60,7 @@ app.all("/mcp", async (c) => {
   return response
 })
 
+logStartup(PORT, ALL_NETWORKS, !!betterstack)
 console.log(`foc-observer server starting on port ${PORT}`)
 
 for (const [name, client] of ponderClients) {
@@ -66,6 +68,7 @@ for (const [name, client] of ponderClients) {
   console.log(`  ${name}: postgres=${config.databaseUrl.replace(/\/\/.*@/, "//***@")} rpc=${config.rpcUrl}`)
 }
 console.log(`  BetterStack: ${betterstack ? "configured" : "not configured (set BETTERSTACK_CH_USER/PASSWORD)"}`)
+if (process.env.FOC_LOG_PATH) console.log(`  Log file: ${process.env.FOC_LOG_PATH}`)
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`foc-observer server listening on http://localhost:${info.port}`)
