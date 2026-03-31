@@ -318,18 +318,25 @@ function validateFuncCall(node: Record<string, unknown>): void {
   const funcname = node.funcname as Array<{ String: { sval: string } }> | undefined
   if (!funcname || funcname.length === 0) return
 
-  // Reject all schema-qualified function calls.
-  // Unqualified builtins resolve to pg_catalog implicitly, which is safe.
-  // Schema-qualified calls could reference user-defined functions in other schemas
-  // that happen to shadow builtin names (e.g. public.lower() could be anything).
-  if (funcname.length > 1) {
+  // The Postgres parser rewrites standard SQL syntax like EXTRACT(), OVERLAY(),
+  // POSITION() into pg_catalog-qualified calls with funcformat = "COERCE_SQL_SYNTAX".
+  // These are safe builtins written in standard SQL, not explicit schema-qualified calls.
+  const isSqlSyntax = node.funcformat === "COERCE_SQL_SYNTAX"
+
+  // Reject explicit schema-qualified function calls (e.g. public.lower()).
+  // Allow pg_catalog calls only when the parser generated them from SQL syntax.
+  if (funcname.length > 1 && !isSqlSyntax) {
     const schema = funcname[0]?.String?.sval ?? ""
     const name = funcname[funcname.length - 1]?.String?.sval ?? ""
     throw new Error(`Schema-qualified function calls are not allowed: ${schema}.${name}(). Use unqualified function names.`)
   }
 
-  const name = funcname[0]?.String?.sval?.toLowerCase()
+  const name = funcname[funcname.length - 1]?.String?.sval?.toLowerCase()
   if (!name) return
+
+  // SQL-syntax builtins (EXTRACT, POSITION, OVERLAY, TRIM, etc.) are always safe --
+  // the parser generated the pg_catalog qualification, the user wrote standard SQL.
+  if (isSqlSyntax) return
 
   if (!ALLOWED_FUNCTIONS.has(name)) {
     throw new Error(`Function ${name}() is not allowed. Only safe read-only functions are permitted.`)

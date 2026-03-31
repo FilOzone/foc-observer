@@ -247,8 +247,22 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("SELECT public.lower('X')")).toThrow(/Schema-qualified function/)
   })
 
-  test("blocks pg_catalog qualified function calls", () => {
+  test("blocks explicit pg_catalog qualified function calls", () => {
     expect(() => validateSql("SELECT pg_catalog.lower('X')")).toThrow(/Schema-qualified function/)
+  })
+
+  // -- SQL syntax builtins (parser rewrites to pg_catalog internally) --
+
+  test("allows EXTRACT (parser rewrites to pg_catalog.extract)", () => {
+    expect(() => validateSql("SELECT EXTRACT(EPOCH FROM NOW())")).not.toThrow()
+  })
+
+  test("allows POSITION", () => {
+    expect(() => validateSql("SELECT POSITION('x' IN source) FROM fwss_data_set_created")).not.toThrow()
+  })
+
+  test("allows OVERLAY", () => {
+    expect(() => validateSql("SELECT OVERLAY(source PLACING 'x' FROM 1 FOR 1) FROM fwss_data_set_created")).not.toThrow()
   })
 
   // -- Dangerous functions --
