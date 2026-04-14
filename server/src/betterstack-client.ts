@@ -179,7 +179,7 @@ export class BetterStackClient {
 
   private buildAggregateQuery(hours: QuantizedHours, providerId?: string): string {
     const providerFilter = providerId
-      ? `AND JSONExtractString(tags, 'providerId') = '${BetterStackClient.validateProviderId(providerId)}'`
+      ? `AND tags['providerId'] = '${BetterStackClient.validateProviderId(providerId)}'`
       : ""
 
     // Compute delta per series_id first, then sum across series.
@@ -190,16 +190,16 @@ export class BetterStackClient {
 FROM (
   SELECT
     series_id,
-    JSONExtractString(tags, 'providerId') AS provider_id,
-    JSONExtractString(tags, 'providerName') AS provider_name,
-    JSONExtractString(tags, 'providerStatus') AS provider_status,
+    tags['providerId'] AS provider_id,
+    tags['providerName'] AS provider_name,
+    tags['providerStatus'] AS provider_status,
     name,
-    JSONExtractString(tags, 'value') AS status_label,
+    tags['value'] AS status_label,
     greatest(0, maxMerge(value_max) - minMerge(value_min)) AS delta
   FROM {table}
   WHERE dt >= now() - INTERVAL ${hours} HOUR
     AND name IN ('dataStorageStatus', 'retrievalStatus')
-    AND JSONExtractString(tags, 'app') = 'dealbot'
+    AND tags['app'] = 'dealbot'
     ${providerFilter}
   GROUP BY series_id, provider_id, provider_name, provider_status, name, status_label
 )
@@ -210,7 +210,7 @@ ORDER BY provider_id, name, status_label`
 
   private buildTimeSeriesQuery(hours: QuantizedHours, bucketHours: number, providerId?: string): string {
     const providerFilter = providerId
-      ? `AND JSONExtractString(tags, 'providerId') = '${BetterStackClient.validateProviderId(providerId)}'`
+      ? `AND tags['providerId'] = '${BetterStackClient.validateProviderId(providerId)}'`
       : ""
 
     return `SELECT
@@ -220,15 +220,15 @@ FROM (
   SELECT
     series_id,
     toString(toStartOfInterval(dt, INTERVAL ${bucketHours} HOUR)) AS bucket,
-    JSONExtractString(tags, 'providerId') AS provider_id,
-    JSONExtractString(tags, 'providerName') AS provider_name,
+    tags['providerId'] AS provider_id,
+    tags['providerName'] AS provider_name,
     name,
-    JSONExtractString(tags, 'value') AS status_label,
+    tags['value'] AS status_label,
     greatest(0, maxMerge(value_max) - minMerge(value_min)) AS delta
   FROM {table}
   WHERE dt >= now() - INTERVAL ${hours} HOUR
     AND name IN ('dataStorageStatus', 'retrievalStatus')
-    AND JSONExtractString(tags, 'app') = 'dealbot'
+    AND tags['app'] = 'dealbot'
     ${providerFilter}
   GROUP BY series_id, bucket, provider_id, provider_name, name, status_label
 )

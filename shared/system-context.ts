@@ -40,7 +40,7 @@ IMPORTANT - two-step activation:
 
 **"What happened historically?"** -> SQL against indexed events: query_sql. All contract events since deployment on both networks.
 
-**"How healthy are providers?"** -> Deal/retrieval rates: get_dealbot_providers, get_dealbot_provider_detail. Proving fault rate: get_proving_health (authoritative, includes silent faults). Error analysis: get_dealbot_failures.
+**"How healthy are providers?"** -> Deal/retrieval rates: get_dealbot_providers, get_dealbot_provider_detail. Proving fault rate: get_proving_health (primary, computed from indexed PDPVerifier events). Cross-validation: get_proving_health_goldsky (PDP Explorer subgraph). Error analysis: get_dealbot_failures.
 
 **Default to mainnet** unless the user asks about calibnet. Both are fully indexed.
 
@@ -54,9 +54,14 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 - **ServiceProviderRegistry**: SP registration, names, capabilities, product metadata.
 - **SessionKeyRegistry**: Scoped delegation keys for reduced-friction operations.
 
-**Service contracts (opinionated applications):**
-- **FWSS (FilecoinWarmStorageService)**: The current warm storage service. Creates 3 payment rails per dataset (PDP, CDN, cache-miss), validates proving, manages pricing. FWSS is the operator and validator on PDP rails. Other services will follow (PoRep, cold storage, etc.)
+**Service contracts (opinionated applications built on FilecoinPay):**
+- **FWSS (FilecoinWarmStorageService)**: FilOz's warm storage service. Creates 3 payment rails per dataset (PDP, CDN, cache-miss), validates proving, manages pricing. Operator: 0x8408502033c418e1bbc97ce9ac48e5528f371a9f (mainnet). Indexed in fwss_* tables.
+- **Storacha (FWSS fork)**: A separate FWSS-fork listener contract running on the SAME PDPVerifier and SAME FilecoinPay as FilOz's FWSS. Mainnet: 0x56e53c5e7f27504b810494cc3b88b2aa0645a839. Calibnet: 0x0c6875983B20901a7C3c86871f43FdEE77946424. Their SPs are registered in the SAME ServiceProviderRegistry but use did:key names. Largest FilecoinPay user by volume. Indexed in storacha_fwss_* tables (mirror of fwss_* schema).
 - **ProviderIdSet**: Curated endorsed provider set, maintained by FilOz.
+
+**FilBeam (CDN bandwidth ledger):** Non-upgradeable operator contract. Off-chain measures CDN/cache-miss bytes per dataset, periodically calls recordUsageRollups -> emits UsageReported. Settlement of CDN rails happens via FilBeamOperator.settleCDNPaymentRails -> FWSS.settleFilBeamPaymentRails -> FilecoinPay one-time payment. Indexed in fb_* tables. Multiple historical addresses per network (redeployed periodically); join to fwss_data_set_created via data_set_id, then to fp_rail_created via cdn_rail_id / cache_miss_rail_id. NOT used by Storacha.
+
+**CRITICAL: FilecoinPay is operator-agnostic.** Multiple service contracts use it independently. For network-wide aggregate metrics (total deposits, total settlements, ARR), always start from fp_* tables without joining to fwss_* tables. Only narrow to fwss_* when analyzing FWSS-specific behavior. fwss_* events only fire for FWSS-operated rails; storacha_fwss_* events only fire for Storacha-operated rails. PDPVerifier events (pdp_* tables) and FilecoinPay events (fp_* tables) cover BOTH service contracts since they share the underlying infrastructure.
 
 **Provider tiers** (each a subset of the previous):
 1. **Registered** (isActive): in ServiceProviderRegistry. Any SP can register.
@@ -65,11 +70,11 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 
 ## Key Terms
 
-- **Data Set**: Pieces stored by one SP for one client. Has dataSetId, 3 payment rails.
+- **Data Set**: Pieces stored by one SP for one client. FWSS datasets have 3 rails (PDP, CDN, cache-miss). Non-FWSS operators may structure rails differently.
 - **Rail**: Payment channel (railId, payer, payee, rate, lockup). endEpoch > 0 = terminated.
 - **Proving period**: SP must prove data possession each period (calibnet ~2h, mainnet ~24h). 5 challenges per dataset per period. Missing the 20-epoch challenge window = fault.
 - **FaultRecord**: Fires only when nextProvingPeriod is called with missed proof. Silent SPs produce NO fault events.
-- **Operator**: Contract that manages rails (FWSS for FOC). Validator: arbiter during settlement (FWSS checks proofs on PDP rails; CDN rails have no validator).
+- **Operator**: Contract that manages rails on FilecoinPay. Multiple operators can exist: FWSS is one, Storacha runs another. Query SELECT DISTINCT operator FROM fp_rail_created to find all operators. Validator: arbiter during settlement (checks proofs on PDP rails; CDN rails have no validator).
 - **Settlement**: Funds flow from payer to payee. For PDP rails: proven periods = full payment, faulted = zero, open = blocked. All fp_rail_settled amount fields are INCREMENTAL per event, SUM() for totals.
 - **USDFC**: Payment token. All amounts bigint, 18 decimals (divide by 1e18).
 - **Epoch**: Filecoin block height, ~30 seconds. block_number in database = epoch.
@@ -82,7 +87,9 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 - Amounts: bigint, 18 decimals. 1 USDFC = 1000000000000000000.
 - Timestamps: unix seconds. Use TO_TIMESTAMP(timestamp) for dates.
 - Provider IDs: small integers. Always resolve to names via get_providers, show as "Name (ID)".
-- Dataset metadata: "source" identifies creating app (e.g. "filecoin-pin"). Indexed column. DealBot wallet: 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71 (use payer address to filter, not source).
+- Dataset metadata: "source" identifies creating app (e.g. "filecoin-pin"). Indexed column.
+- Known wallets (both networks): DealBot (legacy): 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71, DealBot (current multisig): 0x305025D07c1DEe47F25a4990179eFf2becddCA0B, Storacha: 0x3c1ae7a70a2b51458fcb7927fd77aae408a1b857, Tippy/ezpdpz: 0x3E4E5f067cfdA2F16Aade21912B8324c3D9624F8 (endorsed SP operator), PinMe: 0xd19d84c77bbb901971e460830e310933a210dbaa. Use payer address to filter by party, not source metadata.
+- Storacha runs a separate service contract (FWSS fork) as both operator and validator on their rails. Their SPs use did:key names in ServiceProviderRegistry and are not managed by FWSS. Storacha is the largest FilecoinPay user on mainnet by deposit and settlement volume.
 - 3 rails per dataset: PDP (storage, validated), CDN (bandwidth, unvalidated), cache-miss (origin fetch, unvalidated).
 - fwss tables use data_set_id, pdp tables use set_id, same value, JOIN them directly.
 
@@ -135,7 +142,7 @@ A rail is a payment channel: payer -> payee, managed by an operator, optionally 
 
 **Data set state from get_dataset()**:
 - pdpEndEpoch > 0 means the data set is terminated (service ending). The SP must continue proving during the lockup period.
-- metadata["source"] identifies the creating application. "dealbot" = automated testing. Filter this for organic metrics.
+- metadata["source"] identifies the creating application. DealBot datasets have source "dealbot" (current) or "filecoin-pin" or NULL (historical, before source fix). Filter by payer address for reliable DealBot identification, not source metadata alone.
 - metadata["withCDN"] = "true" means CDN rails are active.
 - providerId links to ServiceProviderRegistry for SP details.
 
@@ -198,11 +205,11 @@ The fp_* tables provide full payment flow visibility:
 - Relationship: total_settled_amount = total_net_payee_amount + network_fee + operator_commission (per event).
 - settled_up_to: the epoch up to which settlement has been processed. This IS cumulative / monotonically increasing per rail.
 
-**Per-provider revenue**: JOIN fp_rail_settled with fwss_data_set_created ON rail_id = pdp_rail_id to link settlements to providers. GROUP BY provider_id for per-SP revenue.
+**Per-provider revenue (FWSS only)**: JOIN fp_rail_settled with fwss_data_set_created ON rail_id = pdp_rail_id to link settlements to FWSS providers. GROUP BY provider_id. NOTE: this misses non-FWSS operators (e.g. Storacha). For total FilecoinPay revenue across all operators, use fp_rail_settled directly grouped by rail_id or joined to fp_rail_created for payer/payee/operator breakdown.
 
 **Per-ERC20**: Filter any fp_* table by the token column. fp_rail_created.token identifies the currency. fp_deposit.token and fp_withdrawal.token show token-specific flows.
 
-**Commission breakdown**: Each fp_rail_settled event has totalSettledAmount (gross for this settlement), totalNetPayeeAmount (to SP), operatorCommission (to FWSS, currently 0), networkFee (burned/auctioned). Per-event split: gross = net + commission + fee. SUM() each field across events for totals.
+**Commission breakdown**: Each fp_rail_settled event has totalSettledAmount (gross for this settlement), totalNetPayeeAmount (to SP), operatorCommission (to the operator, currently 0 for both FWSS and Storacha), networkFee (burned/auctioned, 0.5%). Per-event split: gross = net + commission + fee. SUM() each field across events for totals.
 
 **One-time payment rails**: Rails with paymentRate=0 and lockupFixed>0 are used for one-time payments (not streaming). The payment is processed via fp_one_time_payment (not fp_rail_settled). These rails are typically created, paid, and finalized quickly - sometimes in the same block.
 
@@ -358,14 +365,18 @@ Each tool gets its data from a specific upstream source. When explaining results
 - Fields: error messages, counts, affected providers. Error categories: "fetch failed" = SP unreachable, 502 = backend down, "LockupNotSettledRateChangeNotAllowed" = payment contract issue.
 
 **Proving health tools** (get_proving_health, get_proving_dataset):
-- Source: PDP Explorer subgraph hosted on Goldsky (public GraphQL, no auth).
-- How: The subgraph indexes PDPVerifier contract events and also tracks proving period deadlines. When a deadline passes without a proof submission, the subgraph records a fault - even if no on-chain event was emitted (a "silent fault"). This is the key difference from on-chain fwss_fault_record data.
-- Fields: totalFaultedPeriods (distinct periods missed), totalProvingPeriods (total periods elapsed), faultRate (faulted/total as percentage). Weekly breakdown includes per-week faults, proofs, data added/removed.
-- Calculation: faultRate = totalFaultedPeriods / totalProvingPeriods * 100. This counts actual distinct missed periods, not consecutive-miss counts like on-chain periodsFaulted.
-- Endpoint: calibnet at api.goldsky.com/.../pdp-explorer/calibration311a/gn, mainnet at .../mainnet311b/gn.
-- Limitation: All-time aggregates only (no time-windowed queries). Weekly/monthly breakdowns are pre-aggregated by the subgraph.
-- Known issue: the subgraph overcounts "active" proof sets by ~35%, empty datasets (leafCount=0) and stale datasets (deadline far behind current block) are still marked isActive=true. For accurate active dataset counts, filter for leafCount > 0 and recent nextDeadline.
-- Terminology: totalProvingPeriods and totalFaultedPeriods count PROVING PERIODS, not individual challenges. Each proving period has 5 challenges, but the subgraph aggregates at the period level. Do not multiply by 5.
+- Source: Local computation from indexed PDPVerifier events (pdp_next_proving_period, pdp_possession_proven, pdp_data_set_created). Operator-agnostic -- works for FWSS, Storacha, any future service contract.
+- How: The "proof-gap" method. For each pair of consecutive NextProvingPeriod events on a dataset, check whether a PossessionProven event exists in the window between them. No proof = fault. If the epoch gap spans multiple proving periods (SP went dark), the extra periods are inferred as skipped faults.
+- Proving period derivation: NOT hardcoded. Derived per-dataset from the mode (most common gap) of observed consecutive NextProvingPeriod events. Works for any listener's configured maxProvingPeriod (FWSS=2880, calibnet=240, or any future value).
+- Active dataset counting: A dataset is "active" only if it is not deleted, not emptied, AND has proved within the last 3 days. This avoids the ~35% inflation seen in the PDP Explorer subgraph's isActive field.
+- Fields: totalProvingPeriods (including inferred skipped periods), totalFaultedPeriods (observed faults + inferred skipped faults), faultRate (faulted/total * 100). Weekly breakdown includes per-week periods, faults, proofs, datasets created, pieces added.
+- Terminology: All counts are PROVING PERIODS, not individual challenges. The number of challenges per proof is listener-dependent (5 for FWSS) and is NOT assumed or multiplied.
+
+**Goldsky cross-validation tools** (get_proving_health_goldsky, get_proving_dataset_goldsky):
+- Source: PDP Explorer subgraph on Goldsky (independent computation, public GraphQL).
+- Use for cross-validation when accuracy is critical. Compare results with get_proving_health.
+- Known issues: hardcoded proving period (240 on mainnet, should be 2880 -- fix in PR #96), ~35% isActive inflation, hardcoded challengesPerProof=5, FWSS-centric service entities.
+- Numbers may differ slightly from local computation due to these issues. Where they diverge, the local computation is more trustworthy.
 
 ## DealBot Quality Assurance
 
@@ -374,7 +385,7 @@ DealBot is the automated QA system for FOC. It continuously tests all registered
 **What DealBot tests (per SP, continuously):**
 - **Data Storage**: upload 10MB file, wait for on-chain confirmation (addPieces), check IPNI indexing and retrieval. 4 deals/SP/hour (96/day). Per-step timeouts: ingest 20s, onChain 60s, IPNI verify 60s, retrieval 20s, total check 180s.
 - **IPFS Retrieval**: fetch previously stored file via SP's /ipfs gateway, validate DAG integrity. 4 retrievals/SP/hour. Timeouts: IPNI verify 10s, retrieval 20s, total check 30s.
-- **Data Retention**: DealBot seeds 15 data sets per SP. The SPs must prove possession of this data each proving period (5 challenges/data set/day on mainnet = 75 daily proof challenges per SP). Retention results are tracked by the PDP Explorer subgraph, not by DealBot's Prometheus metrics.
+- **Data Retention**: DealBot seeds 15 data sets per SP. The SPs must prove possession of this data each proving period. The number of challenges per proof is listener-dependent (currently 5 for FWSS). Retention results are tracked by get_proving_health (local proof-gap computation), not by DealBot's Prometheus metrics.
 
 **SP Approval Acceptance Criteria** (from DealBot production-configuration-and-approval-methodology.md):
 
@@ -408,21 +419,85 @@ IPNI (InterPlanetary Network Indexer) verification is tracked separately in Deal
 
 ## Proving Fault Data - Three Sources, Different Accuracy
 
-Three places to get fault/proving data, each with different completeness:
+Three places to get fault/proving data:
 
-1. **PDP Explorer subgraph** (get_proving_health, get_proving_dataset): AUTHORITATIVE. The subgraph watches proving period deadlines and records a fault when a deadline passes without proof submission - including "silent faults" where the SP never called nextProvingPeriod (no on-chain event). totalFaultedPeriods / totalProvingPeriods gives the true fault rate. Use this for SLA retention assessment (<= 0.2%).
+1. **Local proof-gap computation** (get_proving_health, get_proving_dataset): PRIMARY. Computed from indexed PDPVerifier events. Detects faults by checking for missing PossessionProven events between consecutive NextProvingPeriod calls. Infers skipped periods when an SP goes dark (epoch gap > one proving period). Operator-agnostic (works for FWSS, Storacha, any listener). Derives proving period per-dataset from observed data. Use this for SLA retention assessment (<= 0.2%).
 
-2. **On-chain fwss_fault_record** (query_sql): Only captures faults where nextProvingPeriod was actually called. Silent SPs produce NO fault events. The periodsFaulted field counts consecutive misses per FaultRecord event, which can exceed actual distinct missed periods (e.g. 20 consecutive misses = one event with periodsFaulted=20, but the subgraph counts it as 20 faulted periods). Use for historical investigation (when did faults start? which data sets? what gas was spent?) but NOT for SLA fault rate.
+2. **PDP Explorer subgraph** (get_proving_health_goldsky, get_proving_dataset_goldsky): CROSS-VALIDATION. Independent computation via Goldsky-hosted subgraph. Has known issues (hardcoded proving period, isActive inflation, challenge count assumptions). Use to cross-check local results when accuracy is critical.
 
-3. **BetterStack/DealBot**: Deals and IPFS retrieval only. No retention/proving data. The dataSetChallengeStatus Prometheus metric was removed from our queries because it produced misleading fleet-wide numbers.
+3. **On-chain fwss_fault_record** (query_sql): FWSS-ONLY supplementary data. Only fires for FWSS-operated datasets when nextProvingPeriod is called. Missing faults for Storacha and other operators. Useful for FWSS-specific investigation (when did faults start? which datasets? gas costs?) but NOT for aggregate fault rates.
 
-Never substitute on-chain fault calculations for subgraph data in SLA assessments. The subgraph is the source of truth for "how many proving periods did this SP miss?"
+4. **BetterStack/DealBot**: Deals and IPFS retrieval only. No retention/proving data.
 
 **Cross-referencing across sources:**
-- SP faulting in subgraph AND failing DealBot deals = systemic problem (SP likely down)
-- SP clean in subgraph BUT failing DealBot deals = upload/network issue, not a proving problem
-- SP faulting in subgraph BUT passing DealBot deals = proving-specific issue (gas, timing, or specific data sets)
-- SP silent in subgraph (zero proving periods) AND no on-chain events = SP completely dead
+- SP faulting in get_proving_health AND failing DealBot deals = systemic problem (SP likely down)
+- SP clean in get_proving_health BUT failing DealBot deals = upload/network issue, not a proving problem
+- SP faulting in get_proving_health BUT passing DealBot deals = proving-specific issue (gas, timing, or specific datasets)
+- SP with zero proving periods in last 3 days AND no on-chain events = SP completely dead
+- Local and Goldsky results diverge significantly = investigate specific datasets, may indicate subgraph bug or data gap
+
+## Aggregate FilecoinPay Metrics (network-wide, all operators)
+
+CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables -- that only captures FWSS-operated rails and misses other operators like Storacha (which accounts for ~74% of mainnet settlement volume).
+
+**Total revenue**: SUM(total_net_payee_amount::numeric)/1e18 FROM fp_rail_settled. This is all USDFC paid to all SPs across all operators.
+**Total revenue including one-time payments**: Add SUM(net_payee_amount::numeric)/1e18 FROM fp_one_time_payment.
+**ARR (Annual Recurring Revenue)**: Use fp_rail_rate_modified (NOT fwss_rail_rate_updated which is FWSS-only). For active non-terminated non-finalized rails: SUM the latest new_rate per rail_id, multiply by epochs_per_year (2880 * 365). Or query live rail state via get_rail for each active rail.
+**Revenue by operator**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY operator. This shows FWSS vs Storacha vs other operators.
+**Revenue by SP**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY payee. Each payee is an SP address.
+**Deposits/TVL**: fp_deposit and fp_withdrawal directly, no FWSS join needed.
+
+Known operators on mainnet:
+- FWSS: 0x8408502033c418e1bbc97ce9ac48e5528f371a9f
+- Storacha: 0x56e53c5e7f27504b810494cc3b88b2aa0645a839
+- Discover others: SELECT DISTINCT operator, COUNT(*) as rails FROM fp_rail_created GROUP BY operator
+
+## Storacha (separate listener on shared infrastructure)
+
+Storacha runs a fork of FWSS as a parallel listener contract on the SAME PDPVerifier and SAME FilecoinPay used by FilOz's FWSS. Their datasets, pieces, faults, and rate updates are tracked in storacha_fwss_* tables (mirror of the fwss_* schema). Their rails, settlements, and deposits are in fp_* tables shared with FWSS. Their proving periods and proofs are in pdp_* tables shared with FWSS.
+
+**To query Storacha-specific data**: use storacha_fwss_* tables exactly the same way you'd use fwss_* tables. Schema is identical (dataSetId, payer, payee, etc.).
+
+**To query Storacha settlements**: filter fp_rail_settled / fp_rail_created by operator = '0x56e53c5e7f27504b810494cc3b88b2aa0645a839' (mainnet) or '0x0c6875983b20901a7c3c86871f43fdee77946424' (calibnet). Same fp_* tables as FWSS, just different operator.
+
+**To query Storacha proving health**: get_proving_health works for ALL providers regardless of which listener owns their datasets, because it uses pdp_* tables (shared) and the proof-gap method. Storacha SPs use did:key names in get_providers.
+
+**Storacha-specific facts**: Their pricing is 0.9 USDFC/TiB/month (vs FWSS's 2.5). They do not use FilBeam (CDN tables fb_* will not have Storacha activity). They revert SP changes (storacha_fwss_data_set_sp_changed will be empty). They are version 1.1.0 of the FWSS contract; FilOz is on 1.2.0 -- the events are byte-identical between versions.
+
+## FilBeam (incentivized data delivery / CDN)
+
+FilBeam is the CDN / data delivery layer for FOC. Clients retrieve their stored content via FilBeam's global edge infrastructure; pay-per-byte billing is settled on-chain through a hybrid model (off-chain measurement, on-chain accounting). When a dataset is created with CDN enabled, FWSS creates two egress payment rails alongside the storage rail:
+
+- **CDN rail** (payer -> FilBeam): pays FilBeam for content delivery from the edge cache. Covers TOTAL egress (cache hits + cache misses).
+- **Cache-miss rail** (payer -> Storage Provider): compensates the SP when FilBeam has to fetch origin data from them. Covers ONLY the cache-miss bytes.
+
+Pricing (immutable, FWSS constants, exposed via getServicePrice()): ~7 USDFC/TiB for CDN egress, ~7 USDFC/TiB for cache-miss egress. Maximum cost is ~14 USDFC/TiB if every request is a cache miss (both rails charge). Typical cost scales with cache-hit ratio. Per FilBeam docs: "up to $14 per TiB of egress". Storage pricing (2.5 USDFC/TiB/month) is separate and fires PricingUpdated events when changed; egress pricing does not change without a contract upgrade.
+
+**On-chain contract**: FilBeamOperator. Non-upgradeable, redeployed to change rates or logic. Multiple historical addresses exist per network. It does NOT track per-request data -- only accumulated bytes per dataset. NOT used by Storacha (who run their own retrieval infrastructure).
+
+**IMPORTANT: cdn_bytes_used is TOTAL egress (hits + misses), NOT just hits.** cache_miss_bytes_used is a SUBSET of cdn_bytes_used -- the portion that required an origin fetch from the SP. To compute cache hit ratio: 1 - (cache_miss_bytes_used / cdn_bytes_used). Do NOT add the two columns thinking they are disjoint totals. FilBeam's CDN rail is billed on total egress (cdn_bytes_used); the cache-miss rail is billed on the subset (cache_miss_bytes_used).
+
+**Usage reporting schedule**: Mainnet = every 4 hours. Calibnet = every 30 minutes. Rollups cover up to the previous fully-finalized epoch. Reported only via UsageReported events (the fb_usage_reported table). Off-chain reporter key is the "controller" (updates tracked in fb_controller_updated).
+
+**Important caveat**: Only traffic proxied through FilBeam is reported on-chain. If users retrieve content directly from SPs bypassing FilBeam, that traffic is NOT in fb_* tables. These tables represent billable FilBeam-proxied traffic, not all retrievals.
+
+**Tables (fb_*)**:
+- fb_usage_reported: bandwidth rollups (data_set_id, from_epoch, to_epoch, cdn_bytes_used, cache_miss_bytes_used). The bandwidth ledger.
+- fb_cdn_settlement / fb_cache_miss_settlement: USDFC settled per rail (capped to lockupFixed of the rail).
+- fb_payment_rails_terminated: FilBeam-initiated CDN service termination.
+- fb_controller_updated: who can call recordUsageRollups (off-chain reporter authorization).
+- fb_fwss_filbeam_controller_changed: handover between historical FilBeamOperator deployments.
+- fb_ownership_transferred: FilBeamOperator owner changes.
+
+**Joining to FWSS**: data_set_id is the join key. Bandwidth and settlements are PER DATASET, not per rail.
+
+Example -- bytes served + USDFC settled per dataset: SELECT u.data_set_id, SUM(u.cdn_bytes_used) as cdn_bytes, SUM(u.cache_miss_bytes_used) as cm_bytes, (SELECT SUM(s.cdn_amount::numeric)/1e18 FROM fb_cdn_settlement s WHERE s.data_set_id = u.data_set_id) as cdn_paid, d.payer, d.provider_id FROM fb_usage_reported u JOIN fwss_data_set_created d ON u.data_set_id = d.data_set_id GROUP BY u.data_set_id, d.payer, d.provider_id
+
+**Joining to FilecoinPay**: fwss_data_set_created.cdn_rail_id and .cache_miss_rail_id link to fp_rail_created.rail_id. The actual on-chain payment is recorded in fp_one_time_payment (not fp_rail_settled), since CDN rails use one-time payment mechanics.
+
+**Multiple operator instances**: fb_* tables include an "operator" column with the contract address. Each historical FilBeamOperator deployment has its own address; if you want only the current operator, filter by the latest one (find via fb_fwss_filbeam_controller_changed.new_controller in the most recent row).
+
+**Off-chain only data**: Per-request bandwidth is NOT on-chain. The smallest granularity is the rollup window between consecutive UsageReported events for a dataset. There is no per-client or per-region breakdown on-chain.
 
 ## Common Investigation Patterns
 
@@ -439,15 +514,21 @@ WITH faults AS (SELECT d.provider_id, SUM(f.periods_faulted) as total_faults FRO
 - Retention fault rate (<= 0.2%): get_proving_health with the provider's EVM address. Use totalFaultedPeriods / totalProvingPeriods. Check totalProvingPeriods >= 500 for statistical validity.
 Always show sample counts alongside rates.
 
-**Settlement flow**: fp_rail_settled tracks settlement events. All amount fields (total_settled_amount, total_net_payee_amount, network_fee) are INCREMENTAL per event - SUM() them for totals. settled_up_to is the only cumulative field (monotonically increasing epoch). Join with fwss_data_set_created (via rail IDs) to link settlements to data sets/providers.
+**Settlement flow**: fp_rail_settled tracks settlement events. All amount fields (total_settled_amount, total_net_payee_amount, network_fee) are INCREMENTAL per event - SUM() them for totals. settled_up_to is the only cumulative field (monotonically increasing epoch). For FWSS-specific analysis, join with fwss_data_set_created (via rail IDs) to link settlements to data sets/providers. For network-wide totals, use fp_rail_settled directly or join to fp_rail_created for operator/payer/payee breakdown.
 
 **Data set lifecycle**: fwss_data_set_created -> fwss_piece_added (pieces stored) -> pdp_possession_proven (proofs) -> fwss_fault_record (failures) -> fwss_service_terminated (ended). Use get_dataset for current state, get_dataset_proving for live proving status.
 
 **Silent SP detection**: Use get_proving_health - the subgraph tracks missed deadlines even when no events fire. If a provider has data sets where provenThisPeriod=false and nextDeadline is in the past, the SP is silently faulting. For on-chain investigation, query pdp_next_proving_period for each data set and compare MAX(timestamp) against current epoch minus one proving period.
 
-**Partitioning by application**: The source column on fwss_data_set_created identifies which application created each data set (e.g. "filecoin-pin", "synapse-example"). To scope analysis to a specific dapp, filter WHERE source = 'filecoin-pin'. NULL source includes early data sets and apps that haven't adopted the source convention. Do NOT use source to identify DealBot data sets - DealBot's source value varies over time. To reliably isolate DealBot traffic, filter by the DealBot payer wallet address:
-- Mainnet and calibnet: 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71
-Example: SELECT * FROM fwss_data_set_created WHERE payer != '0xa5f90bc2aa73a2e0bad4d7092a932644d5dd5d71' - excludes DealBot Example: SELECT source, COUNT(*) as datasets, SUM(piece_count) as pieces FROM fwss_data_set_created d LEFT JOIN (SELECT data_set_id, COUNT(*) as piece_count FROM fwss_piece_added GROUP BY data_set_id) p ON d.data_set_id = p.data_set_id GROUP BY source.
+**Partitioning by application**: The source column on fwss_data_set_created identifies which application created each data set (e.g. "filecoin-pin", "synapse-example"). To scope analysis to a specific dapp, filter WHERE source = 'filecoin-pin'. NULL source includes early data sets and apps that haven't adopted the source convention.
+
+**Identifying DealBot data sets**: DealBot has two wallet addresses and three historical source metadata values. To reliably capture all DealBot traffic, filter by BOTH payer addresses:
+- Legacy wallet (both networks): 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71
+- Current multisig (both networks, from April 2026): 0x305025D07c1DEe47F25a4990179eFf2becddCA0B
+- Source metadata history: NULL (early datasets), "filecoin-pin" (due to a metadata override bug, ~Mar 2026), "dealbot" (current, from April 2026 onward)
+- To include all DealBot data: WHERE payer IN ('0xa5f90bc2aa73a2e0bad4d7092a932644d5dd5d71', '0x305025d07c1dee47f25a4990179eff2becddca0b')
+- To exclude all DealBot data: WHERE payer NOT IN ('0xa5f90bc2aa73a2e0bad4d7092a932644d5dd5d71', '0x305025d07c1dee47f25a4990179eff2becddca0b')
+- Do NOT rely on source metadata alone to identify DealBot datasets due to the historical inconsistency.
 
 **Session keys for a signer**: The same identity+signer pair can be updated multiple times. To find currently active session keys, take the latest event per identity+signer and check expiry against the current epoch:
 WITH latest AS (SELECT DISTINCT ON (identity, signer) * FROM skr_authorizations_updated WHERE signer = '0x...' ORDER BY identity, signer, block_number DESC) SELECT * FROM latest WHERE expiry > CURRENT_EPOCH

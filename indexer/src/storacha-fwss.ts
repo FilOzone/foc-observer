@@ -1,29 +1,29 @@
 import { ponder } from "ponder:registry"
 import {
-  fwssDataSetCreated,
-  fwssPieceAdded,
-  fwssFaultRecord,
-  fwssRailRateUpdated,
-  fwssServiceTerminated,
-  fwssPricingUpdated,
-  fwssProviderApproved,
-  fwssProviderUnapproved,
-  fwssDataSetSPChanged,
-  fwssPdpPaymentTerminated,
-  fwssCdnPaymentTerminated,
-  fwssCdnServiceTerminated,
-  fwssCdnRailsToppedUp,
-  contractUpgraded,
-  upgradeAnnounced,
-  ownershipTransferred,
-  fwssServiceDeployed,
-  fwssFilbeamControllerChanged,
-  fwssViewContractSet,
+  storachaFwssDataSetCreated,
+  storachaFwssPieceAdded,
+  storachaFwssFaultRecord,
+  storachaFwssRailRateUpdated,
+  storachaFwssServiceTerminated,
+  storachaFwssPricingUpdated,
+  storachaFwssProviderApproved,
+  storachaFwssProviderUnapproved,
+  storachaFwssDataSetSpChanged,
+  storachaFwssPdpPaymentTerminated,
+  storachaFwssCdnPaymentTerminated,
+  storachaFwssCdnServiceTerminated,
+  storachaFwssCdnRailsToppedUp,
+  storachaFwssContractUpgraded,
+  storachaFwssUpgradeAnnounced,
+  storachaFwssOwnershipTransferred,
+  storachaFwssServiceDeployed,
+  storachaFwssFilbeamControllerChanged,
+  storachaFwssViewContractSet,
 } from "ponder:schema"
 import { decodePiece } from "./cid-utils.js"
 import { eventId, eventMeta } from "./event-utils.js"
 
-ponder.on("FWSS:DataSetCreated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:DataSetCreated", async ({ event, context }) => {
   const {
     dataSetId, providerId, pdpRailId, cacheMissRailId, cdnRailId,
     payer, serviceProvider, payee, metadataKeys, metadataValues,
@@ -37,7 +37,7 @@ ponder.on("FWSS:DataSetCreated", async ({ event, context }) => {
   }
 
   await context.db
-    .insert(fwssDataSetCreated)
+    .insert(storachaFwssDataSetCreated)
     .values({
       id: eventId(event),
       dataSetId, providerId, pdpRailId, cacheMissRailId, cdnRailId,
@@ -49,7 +49,7 @@ ponder.on("FWSS:DataSetCreated", async ({ event, context }) => {
     })
 })
 
-ponder.on("FWSS:PieceAdded", async ({ event, context }) => {
+ponder.on("StorachaFWSS:PieceAdded", async ({ event, context }) => {
   const { dataSetId, pieceId, pieceCid: pieceCidRaw, keys, values } = event.args
 
   let pieceCid = pieceCidRaw.data as string
@@ -72,7 +72,7 @@ ponder.on("FWSS:PieceAdded", async ({ event, context }) => {
   }
 
   await context.db
-    .insert(fwssPieceAdded)
+    .insert(storachaFwssPieceAdded)
     .values({
       id: eventId(event),
       dataSetId, pieceId, pieceCid, rawSize, metadata,
@@ -80,24 +80,24 @@ ponder.on("FWSS:PieceAdded", async ({ event, context }) => {
     })
 })
 
-ponder.on("FWSS:FaultRecord", async ({ event, context }) => {
+ponder.on("StorachaFWSS:FaultRecord", async ({ event, context }) => {
   const { dataSetId, periodsFaulted, deadline } = event.args
   await context.db
-    .insert(fwssFaultRecord)
+    .insert(storachaFwssFaultRecord)
     .values({ id: eventId(event), dataSetId, periodsFaulted, deadline, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:RailRateUpdated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:RailRateUpdated", async ({ event, context }) => {
   const { dataSetId, railId, newRate } = event.args
   await context.db
-    .insert(fwssRailRateUpdated)
+    .insert(storachaFwssRailRateUpdated)
     .values({ id: eventId(event), dataSetId, railId, newRate, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:ServiceTerminated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:ServiceTerminated", async ({ event, context }) => {
   const { caller, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
   await context.db
-    .insert(fwssServiceTerminated)
+    .insert(storachaFwssServiceTerminated)
     .values({
       id: eventId(event),
       caller, dataSetId, pdpRailId, cacheMissRailId, cdnRailId,
@@ -105,59 +105,59 @@ ponder.on("FWSS:ServiceTerminated", async ({ event, context }) => {
     })
 })
 
-ponder.on("FWSS:PricingUpdated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:PricingUpdated", async ({ event, context }) => {
   const { storagePrice, minimumRate } = event.args
   await context.db
-    .insert(fwssPricingUpdated)
+    .insert(storachaFwssPricingUpdated)
     .values({ id: eventId(event), storagePrice, minimumRate, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:ProviderApproved", async ({ event, context }) => {
+ponder.on("StorachaFWSS:ProviderApproved", async ({ event, context }) => {
   const { providerId } = event.args
   await context.db
-    .insert(fwssProviderApproved)
+    .insert(storachaFwssProviderApproved)
     .values({ id: eventId(event), providerId, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:ProviderUnapproved", async ({ event, context }) => {
+ponder.on("StorachaFWSS:ProviderUnapproved", async ({ event, context }) => {
   const { providerId } = event.args
   await context.db
-    .insert(fwssProviderUnapproved)
+    .insert(storachaFwssProviderUnapproved)
     .values({ id: eventId(event), providerId, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
+ponder.on("StorachaFWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
   const { dataSetId, oldServiceProvider, newServiceProvider } = event.args
   await context.db
-    .insert(fwssDataSetSPChanged)
+    .insert(storachaFwssDataSetSpChanged)
     .values({ id: eventId(event), dataSetId, oldServiceProvider, newServiceProvider, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:PDPPaymentTerminated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:PDPPaymentTerminated", async ({ event, context }) => {
   const { dataSetId, endEpoch, pdpRailId } = event.args
   await context.db
-    .insert(fwssPdpPaymentTerminated)
+    .insert(storachaFwssPdpPaymentTerminated)
     .values({ id: eventId(event), dataSetId, endEpoch, pdpRailId, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:CDNPaymentTerminated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:CDNPaymentTerminated", async ({ event, context }) => {
   const { dataSetId, endEpoch, cacheMissRailId, cdnRailId } = event.args
   await context.db
-    .insert(fwssCdnPaymentTerminated)
+    .insert(storachaFwssCdnPaymentTerminated)
     .values({ id: eventId(event), dataSetId, endEpoch, cacheMissRailId, cdnRailId, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:CDNServiceTerminated", async ({ event, context }) => {
+ponder.on("StorachaFWSS:CDNServiceTerminated", async ({ event, context }) => {
   const { caller, dataSetId, cacheMissRailId, cdnRailId } = event.args
   await context.db
-    .insert(fwssCdnServiceTerminated)
+    .insert(storachaFwssCdnServiceTerminated)
     .values({ id: eventId(event), caller, dataSetId, cacheMissRailId, cdnRailId, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
+ponder.on("StorachaFWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
   const { dataSetId, cdnAmountAdded, totalCdnLockup, cacheMissAmountAdded, totalCacheMissLockup } = event.args
   await context.db
-    .insert(fwssCdnRailsToppedUp)
+    .insert(storachaFwssCdnRailsToppedUp)
     .values({
       id: eventId(event), dataSetId,
       cdnAmountAdded, totalCdnLockup, cacheMissAmountAdded, totalCacheMissLockup,
@@ -165,44 +165,44 @@ ponder.on("FWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
     })
 })
 
-ponder.on("FWSS:ContractUpgraded", async ({ event, context }) => {
+ponder.on("StorachaFWSS:ContractUpgraded", async ({ event, context }) => {
   const { version, implementation } = event.args
   await context.db
-    .insert(contractUpgraded)
-    .values({ id: eventId(event), contract: "FWSS", version, implementation, ...eventMeta(event) })
+    .insert(storachaFwssContractUpgraded)
+    .values({ id: eventId(event), version, implementation, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:FilecoinServiceDeployed", async ({ event, context }) => {
+ponder.on("StorachaFWSS:FilecoinServiceDeployed", async ({ event, context }) => {
   const { name, description } = event.args
   await context.db
-    .insert(fwssServiceDeployed)
+    .insert(storachaFwssServiceDeployed)
     .values({ id: eventId(event), name, description, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:FilBeamControllerChanged", async ({ event, context }) => {
+ponder.on("StorachaFWSS:FilBeamControllerChanged", async ({ event, context }) => {
   const { oldController, newController } = event.args
   await context.db
-    .insert(fwssFilbeamControllerChanged)
+    .insert(storachaFwssFilbeamControllerChanged)
     .values({ id: eventId(event), oldController, newController, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:ViewContractSet", async ({ event, context }) => {
+ponder.on("StorachaFWSS:ViewContractSet", async ({ event, context }) => {
   const { viewContract } = event.args
   await context.db
-    .insert(fwssViewContractSet)
+    .insert(storachaFwssViewContractSet)
     .values({ id: eventId(event), viewContract, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:UpgradeAnnounced", async ({ event, context }) => {
+ponder.on("StorachaFWSS:UpgradeAnnounced", async ({ event, context }) => {
   const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
   await context.db
-    .insert(upgradeAnnounced)
-    .values({ id: eventId(event), contract: "FWSS", nextImplementation, afterEpoch, ...eventMeta(event) })
+    .insert(storachaFwssUpgradeAnnounced)
+    .values({ id: eventId(event), nextImplementation, afterEpoch, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:OwnershipTransferred", async ({ event, context }) => {
+ponder.on("StorachaFWSS:OwnershipTransferred", async ({ event, context }) => {
   const { previousOwner, newOwner } = event.args
   await context.db
-    .insert(ownershipTransferred)
-    .values({ id: eventId(event), contract: "FWSS", previousOwner, newOwner, ...eventMeta(event) })
+    .insert(storachaFwssOwnershipTransferred)
+    .values({ id: eventId(event), previousOwner, newOwner, ...eventMeta(event) })
 })

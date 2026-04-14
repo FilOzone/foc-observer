@@ -11,6 +11,8 @@ import {
   pdpDataSetEmpty,
   pdpFeeUpdateProposed,
   contractUpgraded,
+  upgradeAnnounced,
+  ownershipTransferred,
 } from "ponder:schema"
 import { decodePiece } from "./cid-utils.js"
 import { eventId, eventMeta } from "./event-utils.js"
@@ -111,4 +113,18 @@ ponder.on("PDPVerifier:ContractUpgraded", async ({ event, context }) => {
   await context.db
     .insert(contractUpgraded)
     .values({ id: eventId(event), contract: "PDPVerifier", version, implementation, ...eventMeta(event) })
+})
+
+ponder.on("PDPVerifier:UpgradeAnnounced", async ({ event, context }) => {
+  const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
+  await context.db
+    .insert(upgradeAnnounced)
+    .values({ id: eventId(event), contract: "PDPVerifier", nextImplementation, afterEpoch, ...eventMeta(event) })
+})
+
+ponder.on("PDPVerifier:OwnershipTransferred", async ({ event, context }) => {
+  const { previousOwner, newOwner } = event.args
+  await context.db
+    .insert(ownershipTransferred)
+    .values({ id: eventId(event), contract: "PDPVerifier", previousOwner, newOwner, ...eventMeta(event) })
 })

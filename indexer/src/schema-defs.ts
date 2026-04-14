@@ -247,7 +247,7 @@ export const TABLES: Record<string, TableDef> = {
     indexes: ["dataSetId"],
   },
 
-  // -- Contract upgrades --
+  // -- Contract lifecycle --
   contract_upgraded: {
     description: "Contract implementation upgrade",
     columns: {
@@ -256,6 +256,44 @@ export const TABLES: Record<string, TableDef> = {
       implementation: { type: "hex" },
     },
     indexes: ["contract", "blockNumber"],
+  },
+  upgrade_announced: {
+    description: "Timelock upgrade announcement (before execution)",
+    columns: {
+      contract: { type: "text", note: "PDPVerifier|FWSS|SPRegistry" },
+      nextImplementation: { type: "hex" },
+      afterEpoch: { type: "bigint", note: "epoch after which upgrade can execute" },
+    },
+    indexes: ["contract"],
+  },
+  ownership_transferred: {
+    description: "Contract ownership change (security-relevant)",
+    columns: {
+      contract: { type: "text", note: "PDPVerifier|FWSS|SPRegistry" },
+      previousOwner: { type: "hex" },
+      newOwner: { type: "hex" },
+    },
+    indexes: ["contract", "newOwner"],
+  },
+  fwss_service_deployed: {
+    description: "FWSS service deployment (fires once at initialization)",
+    columns: {
+      name: { type: "text" },
+      description: { type: "text" },
+    },
+  },
+  fwss_filbeam_controller_changed: {
+    description: "FilBeam CDN controller address change",
+    columns: {
+      oldController: { type: "hex" },
+      newController: { type: "hex" },
+    },
+  },
+  fwss_view_contract_set: {
+    description: "FWSS view contract address change",
+    columns: {
+      viewContract: { type: "hex" },
+    },
   },
 
   // -- FilecoinPay --
@@ -445,5 +483,242 @@ export const TABLES: Record<string, TableDef> = {
       origin: { type: "text" },
     },
     indexes: ["identity", "signer"],
+  },
+
+  // -- FilBeam (CDN bandwidth ledger) --
+  fb_usage_reported: {
+    description: "FilBeam off-chain CDN/cache-miss bandwidth rollup, joins to fwss_data_set_created via data_set_id. cdn_bytes_used is TOTAL egress (hits+misses), cache_miss_bytes_used is a SUBSET (origin fetches only)",
+    columns: {
+      operator: { type: "hex", note: "FilBeamOperator contract address (multiple deployments over time)" },
+      dataSetId: { type: "bigint" },
+      fromEpoch: { type: "bigint" },
+      toEpoch: { type: "bigint" },
+      cdnBytesUsed: { type: "bigint", note: "TOTAL egress bytes including cache misses; cache_hit_ratio = 1 - (cache_miss / cdn)" },
+      cacheMissBytesUsed: { type: "bigint", note: "SUBSET of cdn_bytes_used; bytes that required origin fetch from SP" },
+    },
+    indexes: ["dataSetId", "operator", "timestamp"],
+  },
+  fb_cdn_settlement: {
+    description: "CDN payment rail settled by FilBeam (joins to fwss_data_set_created.cdn_rail_id)",
+    columns: {
+      operator: { type: "hex" },
+      dataSetId: { type: "bigint" },
+      cdnAmount: { type: "bigint", note: "USDFC settled in this event, capped to rail lockupFixed" },
+    },
+    indexes: ["dataSetId", "operator", "timestamp"],
+  },
+  fb_cache_miss_settlement: {
+    description: "Cache-miss payment rail settled by FilBeam (joins to fwss_data_set_created.cache_miss_rail_id)",
+    columns: {
+      operator: { type: "hex" },
+      dataSetId: { type: "bigint" },
+      cacheMissAmount: { type: "bigint", note: "USDFC settled in this event, capped to rail lockupFixed" },
+    },
+    indexes: ["dataSetId", "operator", "timestamp"],
+  },
+  fb_payment_rails_terminated: {
+    description: "FilBeam-initiated CDN service termination, calls FWSS.terminateCDNService",
+    columns: {
+      operator: { type: "hex" },
+      dataSetId: { type: "bigint" },
+    },
+    indexes: ["dataSetId", "operator"],
+  },
+  fb_controller_updated: {
+    description: "FilBeamOperator's authorized controller address changed (off-chain reporter)",
+    columns: {
+      operator: { type: "hex" },
+      oldController: { type: "hex" },
+      newController: { type: "hex" },
+    },
+    indexes: ["operator"],
+  },
+  fb_fwss_filbeam_controller_changed: {
+    description: "FilBeamOperator transferred FWSS-side controller authorization to a new operator instance (upgrade handover)",
+    columns: {
+      operator: { type: "hex", note: "the contract emitting (the previous instance)" },
+      previousController: { type: "hex" },
+      newController: { type: "hex" },
+    },
+    indexes: ["operator"],
+  },
+  fb_ownership_transferred: {
+    description: "FilBeamOperator contract owner changed (security-relevant; controls who can update the controller)",
+    columns: {
+      operator: { type: "hex" },
+      previousOwner: { type: "hex" },
+      newOwner: { type: "hex" },
+    },
+    indexes: ["operator", "newOwner"],
+  },
+
+  // -- Storacha FWSS (separate listener contract on shared PDPVerifier and FilecoinPay) --
+  // Tables mirror fwss_* but track Storacha's own service contract events.
+  // Storacha datasets share pdp_* and fp_* tables; only the FWSS-listener-level events are separate.
+  storacha_fwss_data_set_created: {
+    description: "Storacha FWSS dataset creation with rails and metadata",
+    columns: {
+      dataSetId: { type: "bigint" },
+      providerId: { type: "bigint" },
+      pdpRailId: { type: "bigint" },
+      cdnRailId: { type: "bigint" },
+      cacheMissRailId: { type: "bigint" },
+      payer: { type: "hex" },
+      serviceProvider: { type: "hex" },
+      payee: { type: "hex" },
+      source: { type: "text", nullable: true },
+      withCDN: { type: "bool" },
+      metadata: { type: "text", nullable: true, note: "JSON key-value pairs" },
+    },
+    indexes: ["dataSetId", "providerId", "payer", "serviceProvider", "payee", "pdpRailId", "source", "timestamp"],
+  },
+  storacha_fwss_piece_added: {
+    description: "Piece added to Storacha FWSS dataset",
+    columns: {
+      dataSetId: { type: "bigint" },
+      pieceId: { type: "bigint" },
+      pieceCid: { type: "text", note: "CID string e.g. baga6ea4seaq..." },
+      rawSize: { type: "bigint", note: "bytes, from PieceCIDv2" },
+      metadata: { type: "text", nullable: true, note: "JSON key-value pairs" },
+    },
+    indexes: ["dataSetId", "pieceId", "pieceCid", "timestamp"],
+  },
+  storacha_fwss_fault_record: {
+    description: "Storacha FWSS proving fault, SP missed deadline",
+    columns: {
+      dataSetId: { type: "bigint" },
+      periodsFaulted: { type: "bigint", note: "consecutive misses" },
+      deadline: { type: "bigint", note: "epoch" },
+    },
+    indexes: ["dataSetId", "timestamp"],
+  },
+  storacha_fwss_rail_rate_updated: {
+    description: "Storacha FWSS payment rate change on dataset rail",
+    columns: {
+      dataSetId: { type: "bigint" },
+      railId: { type: "bigint" },
+      newRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },
+    },
+    indexes: ["dataSetId", "railId", "timestamp"],
+  },
+  storacha_fwss_service_terminated: {
+    description: "Storacha FWSS full service termination",
+    columns: {
+      caller: { type: "hex" },
+      dataSetId: { type: "bigint" },
+      pdpRailId: { type: "bigint" },
+      cacheMissRailId: { type: "bigint" },
+      cdnRailId: { type: "bigint" },
+    },
+    indexes: ["dataSetId", "pdpRailId", "caller", "timestamp"],
+  },
+  storacha_fwss_pricing_updated: {
+    description: "Storacha FWSS global storage pricing change",
+    columns: {
+      storagePrice: { type: "bigint", note: "USDFC/TiB/month, 18 dec" },
+      minimumRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },
+    },
+  },
+  storacha_fwss_provider_approved: {
+    description: "Provider approved for Storacha FWSS storage",
+    columns: { providerId: { type: "bigint" } },
+    indexes: ["providerId"],
+  },
+  storacha_fwss_provider_unapproved: {
+    description: "Provider approval revoked from Storacha FWSS",
+    columns: { providerId: { type: "bigint" } },
+    indexes: ["providerId"],
+  },
+  storacha_fwss_data_set_sp_changed: {
+    description: "Storacha FWSS dataset migrated to different SP (note: Storacha reverts SP changes, expect zero rows)",
+    columns: {
+      dataSetId: { type: "bigint" },
+      oldServiceProvider: { type: "hex" },
+      newServiceProvider: { type: "hex" },
+    },
+    indexes: ["dataSetId"],
+  },
+  storacha_fwss_pdp_payment_terminated: {
+    description: "Storacha FWSS PDP storage payment rail terminated",
+    columns: {
+      dataSetId: { type: "bigint" },
+      endEpoch: { type: "bigint" },
+      pdpRailId: { type: "bigint" },
+    },
+    indexes: ["dataSetId"],
+  },
+  storacha_fwss_cdn_payment_terminated: {
+    description: "Storacha FWSS CDN payment rails terminated",
+    columns: {
+      dataSetId: { type: "bigint" },
+      endEpoch: { type: "bigint" },
+      cacheMissRailId: { type: "bigint" },
+      cdnRailId: { type: "bigint" },
+    },
+    indexes: ["dataSetId"],
+  },
+  storacha_fwss_cdn_service_terminated: {
+    description: "Storacha FWSS CDN service fully terminated",
+    columns: {
+      caller: { type: "hex" },
+      dataSetId: { type: "bigint" },
+      cacheMissRailId: { type: "bigint" },
+      cdnRailId: { type: "bigint" },
+    },
+    indexes: ["dataSetId"],
+  },
+  storacha_fwss_cdn_rails_topped_up: {
+    description: "Storacha FWSS CDN lockup funds added",
+    columns: {
+      dataSetId: { type: "bigint" },
+      cdnAmountAdded: { type: "bigint" },
+      totalCdnLockup: { type: "bigint" },
+      cacheMissAmountAdded: { type: "bigint" },
+      totalCacheMissLockup: { type: "bigint" },
+    },
+    indexes: ["dataSetId"],
+  },
+  storacha_fwss_contract_upgraded: {
+    description: "Storacha FWSS contract implementation upgrade",
+    columns: {
+      version: { type: "text" },
+      implementation: { type: "hex" },
+    },
+    indexes: ["blockNumber"],
+  },
+  storacha_fwss_upgrade_announced: {
+    description: "Storacha FWSS timelock upgrade announcement",
+    columns: {
+      nextImplementation: { type: "hex" },
+      afterEpoch: { type: "bigint" },
+    },
+  },
+  storacha_fwss_ownership_transferred: {
+    description: "Storacha FWSS contract ownership change",
+    columns: {
+      previousOwner: { type: "hex" },
+      newOwner: { type: "hex" },
+    },
+    indexes: ["newOwner"],
+  },
+  storacha_fwss_service_deployed: {
+    description: "Storacha FWSS service deployment marker (fires once at initialization)",
+    columns: {
+      name: { type: "text" },
+      description: { type: "text" },
+    },
+  },
+  storacha_fwss_filbeam_controller_changed: {
+    description: "Storacha FWSS FilBeam CDN controller address change (likely unused, Storacha has its own infrastructure)",
+    columns: {
+      oldController: { type: "hex" },
+      newController: { type: "hex" },
+    },
+  },
+  storacha_fwss_view_contract_set: {
+    description: "Storacha FWSS view contract address change",
+    columns: {
+      viewContract: { type: "hex" },
+    },
   },
 }

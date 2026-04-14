@@ -81,6 +81,11 @@ export const fwssCdnServiceTerminated = tables.fwss_cdn_service_terminated
 export const fwssCdnRailsToppedUp = tables.fwss_cdn_rails_topped_up
 
 export const contractUpgraded = tables.contract_upgraded
+export const upgradeAnnounced = tables.upgrade_announced
+export const ownershipTransferred = tables.ownership_transferred
+export const fwssServiceDeployed = tables.fwss_service_deployed
+export const fwssFilbeamControllerChanged = tables.fwss_filbeam_controller_changed
+export const fwssViewContractSet = tables.fwss_view_contract_set
 
 export const fpRailCreated = tables.fp_rail_created
 export const fpRailSettled = tables.fp_rail_settled
@@ -103,3 +108,33 @@ export const sprProviderInfoUpdated = tables.spr_provider_info_updated
 export const sprProductRemoved = tables.spr_product_removed
 
 export const skrAuthorizationsUpdated = tables.skr_authorizations_updated
+
+// FilBeam (CDN bandwidth ledger)
+export const fbUsageReported = tables.fb_usage_reported
+export const fbCdnSettlement = tables.fb_cdn_settlement
+export const fbCacheMissSettlement = tables.fb_cache_miss_settlement
+export const fbPaymentRailsTerminated = tables.fb_payment_rails_terminated
+export const fbControllerUpdated = tables.fb_controller_updated
+export const fbFwssFilbeamControllerChanged = tables.fb_fwss_filbeam_controller_changed
+export const fbOwnershipTransferred = tables.fb_ownership_transferred
+
+// Storacha FWSS (separate listener contract)
+export const storachaFwssDataSetCreated = tables.storacha_fwss_data_set_created
+export const storachaFwssPieceAdded = tables.storacha_fwss_piece_added
+export const storachaFwssFaultRecord = tables.storacha_fwss_fault_record
+export const storachaFwssRailRateUpdated = tables.storacha_fwss_rail_rate_updated
+export const storachaFwssServiceTerminated = tables.storacha_fwss_service_terminated
+export const storachaFwssPricingUpdated = tables.storacha_fwss_pricing_updated
+export const storachaFwssProviderApproved = tables.storacha_fwss_provider_approved
+export const storachaFwssProviderUnapproved = tables.storacha_fwss_provider_unapproved
+export const storachaFwssDataSetSpChanged = tables.storacha_fwss_data_set_sp_changed
+export const storachaFwssPdpPaymentTerminated = tables.storacha_fwss_pdp_payment_terminated
+export const storachaFwssCdnPaymentTerminated = tables.storacha_fwss_cdn_payment_terminated
+export const storachaFwssCdnServiceTerminated = tables.storacha_fwss_cdn_service_terminated
+export const storachaFwssCdnRailsToppedUp = tables.storacha_fwss_cdn_rails_topped_up
+export const storachaFwssContractUpgraded = tables.storacha_fwss_contract_upgraded
+export const storachaFwssUpgradeAnnounced = tables.storacha_fwss_upgrade_announced
+export const storachaFwssOwnershipTransferred = tables.storacha_fwss_ownership_transferred
+export const storachaFwssServiceDeployed = tables.storacha_fwss_service_deployed
+export const storachaFwssFilbeamControllerChanged = tables.storacha_fwss_filbeam_controller_changed
+export const storachaFwssViewContractSet = tables.storacha_fwss_view_contract_set

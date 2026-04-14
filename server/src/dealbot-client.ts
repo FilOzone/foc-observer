@@ -38,9 +38,9 @@ export class DealbotClient {
     return this.get(network, "/v1/metrics/network/stats")
   }
 
-  /** All providers with weekly and all-time performance metrics. */
-  async getProviderMetrics(network: NetworkName): Promise<Tagged> {
-    return this.get(network, "/v1/providers/metrics?limit=100")
+  /** All providers with performance metrics. Endpoint removed from DealBot API; throws descriptive error. */
+  async getProviderMetrics(_network: NetworkName): Promise<Tagged> {
+    throw new Error("DealBot /v1/providers/metrics endpoint has been removed. Use BetterStack-backed get_dealbot_providers MCP tool instead, or query individual providers via get_dealbot_provider_detail.")
   }
 
   /** Single provider metrics over a time window. Presets: 1h, 6h, 12h, 24h, 7d, 30d, 90d. */

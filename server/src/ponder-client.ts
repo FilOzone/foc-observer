@@ -46,6 +46,30 @@ export class PonderClient {
 
   static readonly MAX_ROWS = MAX_ROWS
 
+  /** Internal query with SqlResult shape, bypasses validation, for server-side use only. */
+  async queryInternal(sql: string): Promise<SqlResult> {
+    const client = await this.pool.connect()
+    try {
+      await client.query("BEGIN TRANSACTION READ ONLY")
+      await client.query("SET LOCAL search_path TO public")
+      const result = await client.query(sql)
+      await client.query("COMMIT")
+      const columns = result.fields.map((f) => f.name)
+      const rows = result.rows as Record<string, unknown>[]
+      for (const row of rows) {
+        for (const col of columns) {
+          if (typeof row[col] === "bigint") row[col] = String(row[col])
+        }
+      }
+      return { columns, rows, rowCount: rows.length }
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {})
+      throw err
+    } finally {
+      client.release()
+    }
+  }
+
   /** Internal query, bypasses validation, used by listTables/describeTable */
   private async queryRaw(sql: string): Promise<pg.QueryResult> {
     const client = await this.pool.connect()

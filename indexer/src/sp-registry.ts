@@ -7,6 +7,8 @@ import {
   sprProviderInfoUpdated,
   sprProductRemoved,
   contractUpgraded,
+  upgradeAnnounced,
+  ownershipTransferred,
 } from "ponder:schema"
 import { eventId, eventMeta } from "./event-utils.js"
 
@@ -87,4 +89,18 @@ ponder.on("SPRegistry:ContractUpgraded", async ({ event, context }) => {
   await context.db
     .insert(contractUpgraded)
     .values({ id: eventId(event), contract: "SPRegistry", version, implementation, ...eventMeta(event) })
+})
+
+ponder.on("SPRegistry:UpgradeAnnounced", async ({ event, context }) => {
+  const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
+  await context.db
+    .insert(upgradeAnnounced)
+    .values({ id: eventId(event), contract: "SPRegistry", nextImplementation, afterEpoch, ...eventMeta(event) })
+})
+
+ponder.on("SPRegistry:OwnershipTransferred", async ({ event, context }) => {
+  const { previousOwner, newOwner } = event.args
+  await context.db
+    .insert(ownershipTransferred)
+    .values({ id: eventId(event), contract: "SPRegistry", previousOwner, newOwner, ...eventMeta(event) })
 })

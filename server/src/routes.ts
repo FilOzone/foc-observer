@@ -12,6 +12,7 @@ import { ContractReader } from "./contract-reader.js"
 import { DealbotClient } from "./dealbot-client.js"
 import { BetterStackClient, parseBucket } from "./betterstack-client.js"
 import { SubgraphClient } from "./subgraph-client.js"
+import { ProvingClient } from "./proving-client.js"
 import type { NetworkName } from "./networks.js"
 import { logRest, logSql } from "./logger.js"
 
@@ -268,18 +269,23 @@ export function createRoutes(backends: Backends): Hono {
     }
   })
 
-  // -- PDP subgraph proving routes --
+  // -- Proving routes (local, from indexed events) --
 
-  const subgraph = backends.subgraph
+  const provingClients = new Map<NetworkName, ProvingClient>()
+  for (const [name, client] of backends.ponderClients) {
+    provingClients.set(name, new ProvingClient(client))
+  }
 
   app.get("/proving/provider/:network/:address", async (c) => {
     const network = c.req.param("network")
     if (!validNetwork(network)) return c.json({ error: `Invalid network "${network}".` }, 400)
+    const proving = provingClients.get(network)
+    if (!proving) return c.json({ error: `Network "${network}" not configured.` }, 400)
     const address = c.req.param("address")
     const weeks = Number(c.req.query("weeks") ?? "4")
     try {
-      const health = await subgraph.getProviderProvingHealth(network, address, weeks)
-      if (!health) return c.json({ network, error: `Provider "${address}" not found in subgraph.` }, 404)
+      const health = await proving.getProviderHealth(address, weeks)
+      if (!health) return c.json({ network, error: `Provider "${address}" not found.` }, 404)
       return c.json({ network, ...health })
     } catch (err) {
       return c.json({ error: sanitizeError(err) }, 500)
@@ -289,9 +295,11 @@ export function createRoutes(backends: Backends): Hono {
   app.get("/proving/dataset/:network/:setId", async (c) => {
     const network = c.req.param("network")
     if (!validNetwork(network)) return c.json({ error: `Invalid network "${network}".` }, 400)
+    const proving = provingClients.get(network)
+    if (!proving) return c.json({ error: `Network "${network}" not configured.` }, 400)
     try {
-      const dataset = await subgraph.getDataset(network, c.req.param("setId"))
-      if (!dataset) return c.json({ network, error: `Dataset "${c.req.param("setId")}" not found in subgraph.` }, 404)
+      const dataset = await proving.getDataset(c.req.param("setId"))
+      if (!dataset) return c.json({ network, error: `Dataset "${c.req.param("setId")}" not found.` }, 404)
       return c.json({ network, ...dataset })
     } catch (err) {
       return c.json({ error: sanitizeError(err) }, 500)
@@ -301,9 +309,39 @@ export function createRoutes(backends: Backends): Hono {
   app.get("/proving/providers/:network", async (c) => {
     const network = c.req.param("network")
     if (!validNetwork(network)) return c.json({ error: `Invalid network "${network}".` }, 400)
+    const proving = provingClients.get(network)
+    if (!proving) return c.json({ error: `Network "${network}" not configured.` }, 400)
+    try {
+      const providers = await proving.getProviders()
+      return c.json({ network, providers })
+    } catch (err) {
+      return c.json({ error: sanitizeError(err) }, 500)
+    }
+  })
+
+  // -- Goldsky subgraph proving routes (for cross-validation) --
+
+  const subgraph = backends.subgraph
+
+  app.get("/proving/goldsky/provider/:network/:address", async (c) => {
+    const network = c.req.param("network")
+    if (!validNetwork(network)) return c.json({ error: `Invalid network "${network}".` }, 400)
+    const weeks = Number(c.req.query("weeks") ?? "4")
+    try {
+      const health = await subgraph.getProviderProvingHealth(network, c.req.param("address"), weeks)
+      if (!health) return c.json({ network, error: `Provider not found in subgraph.` }, 404)
+      return c.json({ network, source: "goldsky-subgraph", ...health })
+    } catch (err) {
+      return c.json({ error: sanitizeError(err) }, 500)
+    }
+  })
+
+  app.get("/proving/goldsky/providers/:network", async (c) => {
+    const network = c.req.param("network")
+    if (!validNetwork(network)) return c.json({ error: `Invalid network "${network}".` }, 400)
     try {
       const providers = await subgraph.getProviders(network)
-      return c.json({ network, providers })
+      return c.json({ network, source: "goldsky-subgraph", providers })
     } catch (err) {
       return c.json({ error: sanitizeError(err) }, 500)
     }

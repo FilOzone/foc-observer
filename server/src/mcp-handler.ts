@@ -14,6 +14,7 @@ import { DealbotClient } from "./dealbot-client.js"
 import { formatTableList } from "./table-metadata.js"
 import type { BetterStackClient } from "./betterstack-client.js"
 import type { SubgraphClient } from "./subgraph-client.js"
+import { ProvingClient } from "./proving-client.js"
 import { resolveSystemContext } from "./system-context.js"
 import type { NetworkName } from "./networks.js"
 import { logMcp, logSql } from "./logger.js"
@@ -22,7 +23,10 @@ const networkEnum = z.enum(["calibnet", "mainnet"]).describe(
   "Which Filecoin network to query. Calibnet is the test network (high proving frequency, test data). Mainnet is production (real money, real storage providers).",
 )
 
-const affirmation = z.literal(true).describe(
+const affirmation = z.preprocess(
+  (val) => val === true || val === 1 || (typeof val === "string" && val.toLowerCase() === "true") || val === "1" ? true : val,
+  z.literal(true),
+).describe(
   "You must call get_system_context first, then set this to true. This confirms you have loaded the FOC protocol knowledge required to correctly interpret results from this tool.",
 )
 
@@ -380,22 +384,25 @@ Data source: DealBot NestJS backend database at dealbot.filoz.org (mainnet) / st
     } catch (err) { return toolError(err) }
   }))
 
-  // -- Proving health tools (PDP Explorer subgraph) --
+  // -- Proving health tools (local, from indexed events) --
+
+  const provingClients = new Map<NetworkName, ProvingClient>()
+  for (const [name, client] of ponderClients) {
+    provingClients.set(name, new ProvingClient(client))
+  }
 
   server.registerTool("get_proving_health", {
-    description: `Deep-dive into a storage provider's proving health using the PDP Explorer subgraph, the authoritative source for proving data including silent faults.
+    description: `Deep-dive into a storage provider's proving health. PRIMARY source for fault rates.
 
-Unlike on-chain fwss_fault_record events (which only fire when nextProvingPeriod is called), the subgraph tracks ALL proving periods including missed deadlines where no event fires. This gives accurate fault rates with proper denominators.
+Computed from indexed PDPVerifier events using the proof-gap method: for each NextProvingPeriod event, checks whether a PossessionProven exists in the preceding window. No proof = fault. When an SP goes dark (epoch gap spans multiple proving periods), the skipped periods are inferred as faults. The proving period is derived per-dataset from observed data (not hardcoded), so this works for any listener contract (FWSS, Storacha, etc.).
 
-Returns: all-time fault rate (totalFaultedPeriods / totalProvingPeriods), last 4 weeks of activity breakdown (faults, proofs, data added/removed per week), and per-dataset proving status (provenThisPeriod, nextDeadline, faultCount).
+activeDataSets counts only datasets that are not deleted, not emptied, and have proved in the last 3 days.
+
+Returns: all-time fault rate, weekly activity breakdown (faults, proofs, datasets created, pieces added), per-dataset proving status with derived provingPeriod.
 
 Requires the provider's EVM address (0x...). Call get_providers first to resolve providerId to address.
 
-Use this for:
-- Investigating proving failures or silent SP detection
-- Comparing with DealBot retention fault rate (should agree closely)
-- Per-dataset proving breakdown (which datasets are faulting?)
-- Weekly trend analysis (is the SP getting better or worse?)`,
+For cross-validation, use get_proving_health_goldsky (PDP Explorer subgraph, independent source with known accuracy issues).`,
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -403,29 +410,70 @@ Use this for:
       weeks: z.number().describe("Weeks of activity history (default 4)").default(4),
     },
   }, logged("get_proving_health", async ({ network, address, weeks }) => {
-    if (!subgraph) return toolError(new Error("Subgraph client not configured"))
+    const proving = provingClients.get(network)
+    if (!proving) return toolError(new Error(`Network "${network}" not configured`))
     try {
-      const health = await subgraph.getProviderProvingHealth(network, address, weeks)
-      if (!health) return toolResult({ network, error: `Provider "${address}" not found in PDP subgraph.` })
+      const health = await proving.getProviderHealth(address, weeks)
+      if (!health) return toolResult({ network, error: `Provider "${address}" not found.` })
       return toolResult({ network, ...health })
     } catch (err) { return toolError(err) }
   }))
 
   server.registerTool("get_proving_dataset", {
-    description: `Get proving status for a single dataset from the PDP Explorer subgraph. Returns: isActive, provenThisPeriod, nextDeadline, totalFaultedPeriods, totalProofs, leafCount.
+    description: `Get proving status for a single dataset using the proof-gap method on indexed PDPVerifier events.
 
-Uses the dataset's setId (same as dataSetId in FWSS). The subgraph tracks all proving windows including silent faults.`,
+Returns: provingPeriod (derived from observed data, epochs), totalProvingPeriods (including inferred skipped), totalFaultedPeriods, totalProvedPeriods, lastPeriodTs, lastProofTs, faultRate. Operator-agnostic (works for FWSS, Storacha, any listener).
+
+Uses the dataset's setId (same as dataSetId in FWSS). For cross-validation, use get_proving_dataset_goldsky.`,
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
       dataSetId: z.string().describe("Dataset ID (integer), e.g. '11141'"),
     },
   }, logged("get_proving_dataset", async ({ network, dataSetId }) => {
+    const proving = provingClients.get(network)
+    if (!proving) return toolError(new Error(`Network "${network}" not configured`))
+    try {
+      const dataset = await proving.getDataset(dataSetId)
+      if (!dataset) return toolResult({ network, error: `Dataset "${dataSetId}" not found.` })
+      return toolResult({ network, ...dataset })
+    } catch (err) { return toolError(err) }
+  }))
+
+  // -- Proving health tools (PDP Explorer subgraph via Goldsky, for cross-validation) --
+
+  server.registerTool("get_proving_health_goldsky", {
+    description: `Provider proving health from the PDP Explorer subgraph (Goldsky). Same data as get_proving_health but from an independent source.
+
+Use this for cross-validation when accuracy is critical. Known issue: the subgraph inflates "active" proof set counts by ~35% (empty/stale datasets remain marked isActive). See FilOzone/pdp-explorer#89.`,
+    inputSchema: {
+      i_have_read_the_system_context: affirmation,
+      network: networkEnum,
+      address: z.string().describe("Provider's EVM address (0x...)."),
+      weeks: z.number().describe("Weeks of activity history (default 4)").default(4),
+    },
+  }, logged("get_proving_health_goldsky", async ({ network, address, weeks }) => {
+    if (!subgraph) return toolError(new Error("Subgraph client not configured"))
+    try {
+      const health = await subgraph.getProviderProvingHealth(network, address, weeks)
+      if (!health) return toolResult({ network, error: `Provider "${address}" not found in PDP subgraph.` })
+      return toolResult({ network, source: "goldsky-subgraph", ...health })
+    } catch (err) { return toolError(err) }
+  }))
+
+  server.registerTool("get_proving_dataset_goldsky", {
+    description: `Dataset proving status from the PDP Explorer subgraph (Goldsky). Same data as get_proving_dataset but from an independent source. Use for cross-validation.`,
+    inputSchema: {
+      i_have_read_the_system_context: affirmation,
+      network: networkEnum,
+      dataSetId: z.string().describe("Dataset ID (integer), e.g. '11141'"),
+    },
+  }, logged("get_proving_dataset_goldsky", async ({ network, dataSetId }) => {
     if (!subgraph) return toolError(new Error("Subgraph client not configured"))
     try {
       const dataset = await subgraph.getDataset(network, dataSetId)
-      if (!dataset) return toolResult({ network, error: `Dataset "${dataSetId}" not found in PDP subgraph.` })
-      return toolResult({ network, ...dataset })
+      if (!dataset) return toolResult({ network, source: "goldsky-subgraph", error: `Dataset "${dataSetId}" not found in PDP subgraph.` })
+      return toolResult({ network, source: "goldsky-subgraph", ...dataset })
     } catch (err) { return toolError(err) }
   }))
 
