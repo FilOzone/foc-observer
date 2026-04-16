@@ -112,26 +112,56 @@ This document provides complete protocol knowledge for interpreting FOC contract
 
 A rail is a payment channel: payer -> payee, managed by an operator, optionally arbitrated by a validator.
 
-**Rail lifecycle**: Active (endEpoch=0) -> Terminated (endEpoch>0) -> Finalized (data zeroed, getRail reverts)
+## Dataset and Rail Lifecycle
 
-**Key fields from getRail()**:
-- paymentRate: USDFC per epoch (18 decimals). This is the streaming rate.
-- lockupPeriod: epochs of guaranteed payment after termination. FWSS uses 86400 (30 days), other service contracts may use different values.
-- lockupFixed: reserved for one-time payments (CDN usage). 0 for PDP rails.
-- settledUpTo: last epoch for which payment has been processed. If < current epoch, settlement is pending.
-- endEpoch: 0 = active rail. > 0 = terminated at this epoch.
-- commissionRateBps: basis points taken as service commission. FWSS currently sets this to 0 for all rails.
-- validator: address(0) = no validator (CDN rails). FWSS address = PDP rail (proof-validated settlement).
+Three layers of lifecycle state. Understanding these is critical for correct queries.
 
-**Lockup is NOT a pre-payment**: While a rail is active, payments come from the payer's general funds. The lockup acts as a floor preventing withdrawals. After termination, lockup becomes the actual payment source - it guarantees the payee receives payment for the lockup period (30 days). This is the "safety hatch" pattern.
+**PDPVerifier layer (protocol)**: Binary -- a dataset is either LIVE or DELETED. dataSetLive(setId) returns true when the ID has been allocated AND storageProvider is non-zero. PDPVerifier has NO concept of termination, faulting, or delinquency. A dataset is deleted only when the SP explicitly calls deleteDataSet(), which zeroes storageProvider. The dataset ID is never reused. Deletion is rare and happens only after FWSS-level finalization is complete.
 
-**Settlement mechanics**: settleRail() moves funds from payer to payee. For PDP rails, FWSS.validatePayment() is called, which checks whether proofs were submitted. Proven periods get full payment. Faulted periods (deadline passed, no proof) get zero payment but settlement still advances. Open periods (deadline not yet passed) block settlement.
+**FWSS/Storacha layer (service)**: The service-level lifecycle with termination and lockup states.
 
-**Rate changes**: Create segments in a queue. Settlement processes each segment with the rate that applied during that time period. Adding pieces triggers immediate rate increase. Removing pieces defers rate decrease to next proving period boundary.
+Dataset state machine:
+- **Active** (pdpEndEpoch=0): pieces being stored, SP proving, settlement via validatePayment. New pieces can be added.
+- **Terminated/Lockup** (pdpEndEpoch > 0, pdpEndEpoch > current epoch): Service is ending but lockup period is running. SP MUST continue proving (gets paid for proven periods, zero for faults). No new pieces can be added. Piece removals still allowed.
+- **Post-Lockup** (pdpEndEpoch > 0, pdpEndEpoch <= current epoch): Lockup expired. No more proving. Settlement completes to endEpoch.
+- **Finalized**: All rails settled and zeroed (getRail reverts). Dataset still exists in PDPVerifier.
+- **Deleted**: SP called PDPVerifier.deleteDataSet(). All state cleared. Permanent.
 
-**Piece removal is deferred**: When pieces are removed, they are scheduled for deletion but remain in the dataset until the next nextProvingPeriod call. This is because proofs can challenge any piece in the current period, you can't remove data mid-period. pdp_pieces_removed records the scheduling; the actual deletion happens at the next proving boundary. leafCount only decreases at that point.
+**CRITICAL: pdpEndEpoch is the epoch when payment obligation ENDS, not when termination was requested.** For a fully-funded payer: pdpEndEpoch = termination_block + lockup_period (86400 epochs = 30 days). For an underfunded payer: pdpEndEpoch = last_funded_epoch + lockup_period (could be closer to or even before the current epoch).
 
-**Terminated but not finalized**: After termination, the rail is still "active" in the sense that settlement continues during the lockup period. The SP must keep proving. Only after full settlement does finalization zero out the rail data.
+**Rail lifecycle (FilecoinPay layer)**:
+- Active (endEpoch=0): streaming payments at paymentRate.
+- Terminated (endEpoch > 0): endEpoch = lockupLastSettledAt + lockupPeriod. NOT block.number + lockupPeriod.
+  - endEpoch in the future: lockup running, settlement continues up to current epoch
+  - endEpoch in the past: lockup expired, final settlement to endEpoch, then auto-finalization
+- Finalized: all rail data zeroed. getRail() reverts. Unused lockupFixed returned to payer.
+
+**Key fields from getRail()**: paymentRate (USDFC/epoch), lockupPeriod (epochs, FWSS=86400), lockupFixed (for one-time payments, 0 for PDP rails), settledUpTo (last settled epoch, cumulative), endEpoch (0=active, >0=terminated), validator (address(0)=no validator for CDN, FWSS address=PDP).
+
+**Lockup is NOT a pre-payment**: While active, payments come from payer's general funds. Lockup is a withdrawal floor -- it prevents the payer from withdrawing below the lockup amount, but it does NOT guarantee the funds are actually there. A payer can be "delinquent" (underfunded) if their balance is below the lockup requirement; settlement halts and lockupLastSettledAt stops advancing. After termination, lockup becomes the payment source. If fully funded at termination time, the SP gets the full 30-day guarantee. If underfunded, the guarantee is shorter (endEpoch = last_funded_epoch + lockupPeriod, which may be closer to or even before the current epoch).
+
+**Settlement**: settleRail() moves funds payer->payee. For PDP rails, FWSS.validatePayment() checks proofs: proven=full payment, faulted=zero, open period=blocked. Escape hatch: settleTerminatedRailWithoutValidation (payer-only, after endEpoch passes) bypasses a stuck validator.
+
+**Piece removal is deferred**: schedulePieceDeletions() queues removals. Actual deletion happens in next nextProvingPeriod() call. Pieces remain challengeable until then. pdp_pieces_removed records scheduling; leafCount decreases at the proving boundary. When all pieces are removed, DataSetEmpty fires.
+
+**Rate changes**: Create segments in a queue. Settlement processes each with the rate that applied during that time. Adding pieces = immediate rate increase. Removing pieces = deferred rate decrease (next proving boundary).
+
+## Querying Active vs Terminated Datasets
+
+**Active FWSS datasets (never terminated)**:
+SELECT d.* FROM fwss_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM fwss_service_terminated t WHERE t.data_set_id = d.data_set_id)
+
+**Active Storacha datasets**: Same pattern with storacha_fwss_* tables.
+
+**Terminated but still in lockup** (SP still proving, payments still flowing): Use get_dataset(dataSetId) and check pdpEndEpoch > 0 AND pdpEndEpoch > current_epoch. In SQL, you can approximate current epoch as EXTRACT(EPOCH FROM NOW()) / 30 (epoch = unix_seconds / 30, rough).
+
+**Datasets still live in PDPVerifier** (not deleted): SELECT d.* FROM pdp_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM pdp_data_set_deleted del WHERE del.set_id = d.set_id)
+
+**Truly active (not terminated, not empty, recently proving)**: SELECT d.* FROM fwss_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM fwss_service_terminated t WHERE t.data_set_id = d.data_set_id) AND NOT EXISTS (SELECT 1 FROM pdp_data_set_empty e WHERE e.set_id = d.data_set_id) AND EXISTS (SELECT 1 FROM pdp_next_proving_period n WHERE n.set_id = d.data_set_id AND n.timestamp > EXTRACT(EPOCH FROM NOW()) - 259200)
+
+**Rail status**: Active (endEpoch=0), terminated-in-lockup (endEpoch > current_epoch), post-lockup (endEpoch <= current_epoch), finalized (in fp_rail_finalized table). Use get_rail(railId) for live state or query fp_rail_terminated / fp_rail_finalized tables for historical events.
+
+**Active pieces in a dataset**: Pieces can be removed during a dataset's lifetime. fwss_piece_added records all additions (with piece_id, piece_cid, raw_size). pdp_pieces_removed records removals (piece_ids as JSON array of integers). To find currently active pieces, exclude removed IDs: WITH removed_ids AS (SELECT set_id, jsonb_array_elements_text(piece_ids::jsonb)::int as piece_id FROM pdp_pieces_removed WHERE set_id = <ID>) SELECT p.* FROM fwss_piece_added p WHERE p.data_set_id = <ID> AND NOT EXISTS (SELECT 1 FROM removed_ids r WHERE r.set_id = p.data_set_id AND r.piece_id = p.piece_id). Same pattern works for storacha_fwss_piece_added with storacha table names. For a quick count: SELECT (SELECT COUNT(*) FROM fwss_piece_added WHERE data_set_id = <ID>) - COALESCE((SELECT SUM(piece_count) FROM pdp_pieces_removed WHERE set_id = <ID>), 0) as active_pieces. Also: get_dataset_proving returns activePieceCount for the live on-chain count.
 
 ## FWSS Data Sets
 
@@ -141,7 +171,7 @@ A rail is a payment channel: payer -> payee, managed by an operator, optionally 
 3. Cache-miss rail: one-time payments for origin fetches. No validator.
 
 **Data set state from get_dataset()**:
-- pdpEndEpoch > 0 means the data set is terminated (service ending). The SP must continue proving during the lockup period.
+- pdpEndEpoch = 0: active. pdpEndEpoch > 0: terminated (check against current epoch to distinguish lockup-running vs post-lockup).
 - metadata["source"] identifies the creating application. DealBot datasets have source "dealbot" (current) or "filecoin-pin" or NULL (historical, before source fix). Filter by payer address for reliable DealBot identification, not source metadata alone.
 - metadata["withCDN"] = "true" means CDN rails are active.
 - providerId links to ServiceProviderRegistry for SP details.
@@ -516,7 +546,7 @@ Always show sample counts alongside rates.
 
 **Settlement flow**: fp_rail_settled tracks settlement events. All amount fields (total_settled_amount, total_net_payee_amount, network_fee) are INCREMENTAL per event - SUM() them for totals. settled_up_to is the only cumulative field (monotonically increasing epoch). For FWSS-specific analysis, join with fwss_data_set_created (via rail IDs) to link settlements to data sets/providers. For network-wide totals, use fp_rail_settled directly or join to fp_rail_created for operator/payer/payee breakdown.
 
-**Data set lifecycle**: fwss_data_set_created -> fwss_piece_added (pieces stored) -> pdp_possession_proven (proofs) -> fwss_fault_record (failures) -> fwss_service_terminated (ended). Use get_dataset for current state, get_dataset_proving for live proving status.
+**Data set lifecycle (event sequence)**: fwss_data_set_created -> fwss_piece_added (pieces stored) -> pdp_next_proving_period + pdp_possession_proven (proving) -> fwss_fault_record (failures) -> fwss_service_terminated (termination requested, pdpEndEpoch set) -> [lockup period: SP keeps proving] -> fp_rail_finalized (rails zeroed after full settlement) -> pdp_data_set_deleted (SP cleans up, optional). Use get_dataset for current FWSS state (pdpEndEpoch, metadata, rails), get_dataset_proving for live PDPVerifier proving status, get_rail for rail endEpoch/settlement position.
 
 **Silent SP detection**: Use get_proving_health - the subgraph tracks missed deadlines even when no events fire. If a provider has data sets where provenThisPeriod=false and nextDeadline is in the past, the SP is silently faulting. For on-chain investigation, query pdp_next_proving_period for each data set and compare MAX(timestamp) against current epoch minus one proving period.
 
