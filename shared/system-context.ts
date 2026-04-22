@@ -251,15 +251,77 @@ To identify one-time payment rails: paymentRate=0 in fp_rail_created, non-zero f
 
 **Operator approvals**: fp_operator_approval tracks which wallets have approved which operators (typically FWSS) with an approved boolean.
 
-## Pricing Economics
+## FWSS Pricing Economics
 
-- Storage: 2.5 USDFC per TiB/month (configurable by contract owner)
+These values are FWSS-specific configuration, not protocol constants. FilecoinPay and PDPVerifier are service-agnostic — they have no pricing. Other service contracts (Storacha's FWSS fork, future services) set their own rates and rules; only FWSS uses the numbers below.
+
+- Storage: 2.5 USDFC per TiB/month (configurable via FWSS.updatePricing)
 - Minimum floor: 0.06 USDFC/month for data sets under 24.576 GiB (0.024 TiB; below this size, the per-TiB rate would be less than the minimum)
 - Rate per epoch = max(sizeBasedRate, minimumRate)
-- EPOCHS_PER_MONTH = 86400 (2880/day * 30 days)
+- EPOCHS_PER_MONTH = 86400 (2880/day * 30 days — not a calendar month)
 - Lockup = 30 days of payment = finalRate * 86400
 
-**Example**: A 1 TiB data set costs 2.5 USDFC/month. Rate per epoch = 2.5 / 86400 ≈ 0.0000289 USDFC/epoch. Lockup = 2.5 USDFC.
+**Example**: A 1 TiB FWSS data set costs 2.5 USDFC/month. Rate per epoch = 2.5 / 86400 ≈ 0.0000289 USDFC/epoch. Lockup = 2.5 USDFC.
+
+**Rounding**: The per-epoch rate is computed by integer-dividing the monthly rate by 86400, which truncates. For the floor, this yields 694_444_444_444 attoUSDFC/epoch, and multiplying back out gives 0.05999999999996 USDFC/month rather than exactly 0.06 — a deficit of ~6×10⁻¹³ (negligible but observable). The contract's pre-flight lockup check uses a multiply-first formula to preserve the full monthly value, so funds gating is not affected.
+
+## Cost Attribution
+
+Describes how costs map to on-chain footprints across the shared FOC infrastructure (PDPVerifier, FilecoinPay, ServiceProviderRegistry, SessionKeyRegistry). Where rules vary by service, they're tagged FWSS or Storacha — anything untagged is service-agnostic.
+
+The stack has four payer classes. Every on-chain operation falls into one, and agents answering "what did this cost?" need to know which:
+
+**Client-paid via FilecoinPay rails (USDFC denominated, not FIL gas):**
+- FWSS storage ($2.5/TiB/mo or floor, whichever higher) — streaming rail, drawn down when proofs trigger settlement. Storacha's fork uses its own price schedule.
+- FWSS sybil fee on data set creation (0.1 USDFC per createDataSet, v1.2.0+, mainnet from 2026-03-23) — one-time rail from payer to the FilecoinPay contract, accumulates in the auction pool. Storacha sets its own sybil fee (or none) via its own service contract.
+- CDN egress (where FilBeam is configured)
+- Operator commission — deducted at rail settlement, already inside the settled amount (not a separate payment). Rate set per-rail by the operator at creation.
+
+**SP-paid as FIL gas (SP's wallet submits the tx, PDPVerifier-mediated):**
+- createDataSet, addPieces, piecesRemoved (Curio submits on behalf of the signing client, regardless of which service contract is the listener)
+- provePossession + nextProvingPeriod (FWSS cadence on mainnet is once/day per dataset; calibnet is 12×/day; Storacha sets its own proving period)
+- fp_rail_settled / fp_rail_terminated / fp_rail_finalized / fp_one_time_payment — when the SP claims or finalizes their accrued USDFC, the tx itself costs FIL gas
+- ServiceProviderRegistry ops (registerProvider, addProduct, updateProduct) — registry is shared across services
+
+**Client-paid as FIL gas (client's wallet submits):**
+- FilecoinPay.deposit / withdrawal / setOperatorApproval (shared FilecoinPay)
+- SessionKeyRegistry.authorizationsUpdated (shared SessionKeyRegistry)
+- FWSS.terminateService — callable by EITHER payer or serviceProvider (FilecoinWarmStorageService.sol:1093), check tx_from to attribute. Storacha's termination entry points are on its own service contract.
+
+**External / auction participants (FIL gas + FIL burn):**
+- burnForFees on FilecoinPay — caller pays tx gas AND sends FIL with the tx that gets burned. Not a client, not an SP — a separate participant class.
+
+**Admin / operator (FilOz multisig, FIL gas):**
+- FWSS.updatePricing, proxy upgrades, provider approval/endorsement, FilBeam controller ops (terminateCDNService, CDN rail settlements).
+
+**Classifying tx_from**: The authoritative "is this address an SP?" oracle is \`SELECT DISTINCT tx_from FROM pdp_possession_proven\` — only an SP ever submits a proof. Addresses not in that set are non-SP.
+
+Important caveat: PDPVerifier itself is permissionless. Anyone can call createDataSet / addPieces / provePossession on it directly; FWSS is an opinionated, permissioned service layer on top, but it is not a gate. ServiceProviderRegistry is a discovery and capability registry, not an access-control list for PDPVerifier. So "tx_from on createDataSet is always a registered SP" is a usage pattern, not a protocol guarantee — experimental callers, parallel services (e.g. Storacha's FWSS fork), or a registered SP that has not yet produced its first proof will all show up as non-SP under the proof-oracle classifier. Treat the classifier as a strong signal about the FWSS-mediated pipeline, not as a trustable authorization check.
+
+**Observed distribution (mainnet, all services combined, v1.2.0 through 2026-04-21)**:
+Shared tables like pdp_*, fp_*, spr_* include txs from every service contract that uses them (FWSS, Storacha's fork, direct callers). The numbers below are the network-wide totals, not FWSS-only — FWSS is the dominant user but not the sole one.
+- SP wallets have burned ~177 FIL in gas total. **addPieces alone is 172 FIL — 99.1% of all SP-side gas** across 1.19M txs.
+- Client (non-SP) wallets have burned ~1.2 FIL total, dominated by deposit (1.02 FIL) and operatorApproval (0.38 FIL).
+- Ratio: ~144× more FIL gas burned on the SP side than the client side. The client's economic footprint is overwhelmingly in USDFC via rails, not in FIL via gas.
+- FWSS sybil fee migration: legacy FIL path (pre-2026-03-23 on mainnet) burned ~51 FIL over 510 createDataSet txs at 0.1 FIL each. From 2026-03-23 onward, FWSS routes the sybil fee via a USDFC one-time rail (0.1 USDFC per createDataSet) into the FilecoinPay auction pool; the SP stops paying. Storacha's sybil-fee policy is independent.
+
+**Reference gas averages (mainnet, all services, v1.2.0 through 2026-04-21)** — for back-of-envelope cost estimates. Gas distributions are right-skewed; prefer percentiles over means for projections.
+
+| Operation | Avg gas | Sample |
+|-----------|---------|--------|
+| addPieces (all batch sizes) | 286M | 1,192,264 |
+| provePossession | 185M | 30,533 |
+| nextProvingPeriod | 142M | 32,575 |
+| createDataSet (combined create+add path dominates) | 774M | 881 |
+| piecesRemoved | 1,889M | 248 |
+| fp_deposit | 135M | 401 |
+| fp_operatorApproval | 116M | 324 |
+| fp_settleRail | 671M | 768 |
+| fp_burnForFees | 92M | 24 |
+| spr_productAdded / providerRegistered | 79M | 27 each |
+| skr_authorizationsUpdated | 12M | 8 |
+
+Cost in FIL = gas × effective_gas_price. Both are in every event row, so \`SUM(gas_used × effective_gas_price) / 1e18\` is always the right aggregation for FIL burn.
 
 ## FIL Burn Mechanisms
 
@@ -267,7 +329,9 @@ USDFC accumulates in FilecoinPay's fee auction pool from two sources, then claim
 
 **Source 1 - Settlement network fee:** During settleRail on USDFC-denominated rails, a 0.5% network fee is taken. This fee is credited to the FilecoinPay contract's own internal account (the auction pool). Visible in fp_rail_settled.network_fee (USDFC, 18 decimals). Produces small amounts per settlement (~0.00007 USDFC per minimum-rate rail).
 
-**Source 2 - Sybil fee on data set creation (v1.2.0+):** Each data set creation charges a 0.1 USDFC sybil fee from the client's FilecoinPay balance. FWSS creates a temporary "burn rail" (client -> FilecoinPay contract address), deposits the fee via lockupFixed, then immediately terminates + settles + finalizes the rail in the same transaction. The entire 0.1 USDFC lands in the auction pool. The burn rail is finalized and invisible after creation (getRail reverts). This is the dominant source of auction pool growth - each data set creation adds 0.1 USDFC, dwarfing the trickle from settlement network fees. The sybil fee amount is set at PDPVerifier initialization (USDFC_SYBIL_FEE constant).
+**Source 2 - FWSS sybil fee on data set creation (v1.2.0+, mainnet from 2026-03-23):** This is FWSS-specific. For data sets created via the FWSS pipeline, a 0.1 USDFC sybil fee (PDPVerifier.USDFC_SYBIL_FEE, 10^17 attoUSDFC on mainnet) is charged from the client's FilecoinPay balance. FWSS creates a temporary "burn rail" (client -> FilecoinPay contract address), deposits the fee via lockupFixed, then immediately terminates + settles + finalizes the rail in the same transaction. The rail pays FilecoinPay's 0.5% one-time network fee en route, but that fee also accrues in the same FilecoinPay auction pool, so the full 0.1 USDFC effectively lands in the burn queue. The burn rail is finalized and invisible after creation (getRail reverts). This is the dominant source of auction pool growth — each FWSS data set creation adds 0.1 USDFC, dwarfing the trickle from settlement network fees. Before 2026-03-23 on mainnet, the path was PDPVerifier's native 0.1 FIL burn paid by the SP's wallet in msg.value; that path is still available in PDPVerifier for callers that don't use a whitelisted service. Storacha and other service contracts set their own sybil-fee policy (or none) — do not assume this path applies network-wide.
+
+Observable: \`fp_rail_created WHERE payee = <FilecoinPay contract address>\` identifies sybil-fee rails. \`fp_one_time_payment\` rows with those rail_ids confirm the payment; \`rail_id\` is the link between the two tables.
 
 **Fee auction / burnForFees (USDFC -> FIL conversion):** Accumulated USDFC from both sources is auctioned via Dutch auction. Anyone can call burnForFees(token) to claim the entire pool, sending FIL (burned to f099). burnForFees has NO event - tracked via transaction input data in the fp_burn_for_fees table. Fields: token, recipient, requested_amount (USDFC claimed), fil_burned (FIL sent/burned).
 
@@ -586,6 +650,10 @@ For gas analysis: use gas_used and effective_gas_price from any event in the tra
 - "Why is X failing?" -> get_dealbot_failures (error classification) + query_sql for specific events
 
 **Stuck settlements**: Rails where settledUpTo is far behind the current epoch. Join fp_rail_settled with fp_rail_created to find rails with no recent settlement. Could indicate a stuck validator, underfunded payer, or open proving period blocking progress.
+
+**Empty-dataset settlement gap (FWSS)**: An FWSS data set with zero pieces produces no proofs, so no pdp_possession_proven, no pdp_next_proving_period, and therefore no FWSS settlement-validation callback. FWSS's PDP rail is validator-mediated — payment only advances when proof verification triggers settlement. An empty data set's rail accrues the floor rate in lockup accounting but never emits fp_rail_settled, so the SP is never paid despite the rail being active. This is the system behaving as designed, not a bug: the payment primitive is waiting on proofs that never come. Observable signature: a PDP rail from fp_rail_created with no matching rows in fp_rail_settled after many proving periods, and the owning data set has no rows in pdp_pieces_added or fwss_piece_added. Ask get_rail for the current lockup position and get_dataset for piece state to confirm.
+
+**Gas cost per operation class**: Sum gas from any event in a transaction (all events in a tx share the same receipt). To avoid double-counting when a tx fires multiple events (e.g. combined create+add), pick one primary event per op label and aggregate by DISTINCT tx_hash. Classify tx_from against the SP set from pdp_possession_proven (see Cost Attribution) to split SP-paid vs client-paid. See the reference averages table in Cost Attribution for typical values.
 
 ## HTTP API for Building Live Dashboards
 

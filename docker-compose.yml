@@ -54,6 +54,7 @@ services:
       DATABASE_SCHEMA: public
       RPC_URL: ${CALIBNET_RPC_URL:?}
       PORT: 17827
+      PONDER_EXPERIMENTAL_DB: platform
     restart: unless-stopped
     volumes:
       - ./indexer/ponder.config.calibnet.ts:/app/ponder.config.ts
@@ -73,6 +74,8 @@ services:
       DATABASE_SCHEMA: public
       RPC_URL: ${MAINNET_RPC_URL:?}
       PORT: 17828
+      PONDER_EXPERIMENTAL_DB: platform
+    restart: unless-stopped
     volumes:
       - ./indexer/ponder.config.mainnet.ts:/app/ponder.config.ts
       - ./indexer/ponder.schema.ts:/app/ponder.schema.ts
