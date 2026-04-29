@@ -6,15 +6,17 @@
     "dev": "ponder dev",
     "start": "ponder start",
     "codegen": "ponder codegen",
-    "generate-abis": "./scripts/generate-abis.sh"
+    "generate-abis": "./scripts/generate-abis.sh",
+    "typecheck": "node -e \"require('node:fs').symlinkSync('ponder.config.mainnet.ts', 'ponder.config.ts')\" 2>/dev/null; RPC_URL=http://localhost:1234 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen && tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4",
+    "hono": "^4.5",
     "multiformats": "^13",
-    "ponder": "^0.9",
+    "ponder": "npm:@rvagg/ponder@^0.16.6",
     "viem": "^2.23"
   },
   "devDependencies": {
+    "@types/node": "^22.19.17",
     "typescript": "^5.7"
   }
 }

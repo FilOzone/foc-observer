@@ -1,0 +1,62 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  client:
+    name: client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  server:
+    name: server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      # The server's prebuild copies shared/* and indexer/src/schema-defs.ts
+      # into server/src/ at build time. Those copies are gitignored.
+      - run: npm run build
+      - run: npm test
+
+  indexer:
+    name: indexer
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: indexer
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: indexer/package-lock.json
+      - run: npm ci
+      # typecheck symlinks ponder.config.mainnet.ts -> ponder.config.ts,
+      # runs ponder codegen to materialize ponder-env.d.ts, then tsc --noEmit.
+      # No DB or RPC needed; codegen accepts dummy connection strings.
+      - run: npm run typecheck

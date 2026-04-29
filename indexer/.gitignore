@@ -3,3 +3,7 @@ dist/
 .ponder/
 generated/
 ponder-env.d.ts
+# Symlinked at runtime (Docker volume mount selects the network) and at
+# typecheck time (npm run typecheck symlinks mainnet's config). Either way
+# this file is generated, not authored.
+ponder.config.ts

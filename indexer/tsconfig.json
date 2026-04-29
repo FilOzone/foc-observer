@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
 
     "target": "ESNext",
     "lib": ["ESNext"],
@@ -19,5 +19,11 @@
 
     "skipLibCheck": true
   },
-  "include": ["src", "ponder-env.d.ts"]
+  "include": [
+    "src",
+    "ponder.config.calibnet.ts",
+    "ponder.config.mainnet.ts",
+    "ponder.schema.ts",
+    "ponder-env.d.ts"
+  ]
 }

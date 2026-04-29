@@ -8,7 +8,10 @@
 import { onchainTable, index } from "ponder"
 import { TABLES, STANDARD_COLUMNS, type ColType } from "./src/schema-defs.js"
 
-type TableBuilder = Parameters<Parameters<typeof onchainTable>[1]>[0]
+// Ponder's column-defn arg is overloaded as `Record | (t) => Record`. We want
+// the function form to extract the columns-builder parameter type.
+type ColumnsFn = Extract<Parameters<typeof onchainTable>[1], (...args: never[]) => unknown>
+type TableBuilder = Parameters<ColumnsFn>[0]
 
 function buildColumn(t: TableBuilder, type: ColType, nullable: boolean) {
   const col = type === "bigint" ? t.bigint()
@@ -37,11 +40,13 @@ function buildTable(name: string) {
     }
 
     return cols
-  }, (table) => {
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic index generation
+  }, (table: any) => {
     if (!def.indexes?.length) return {}
-    const indexes: Record<string, ReturnType<typeof index>> = {}
+    // biome-ignore lint/suspicious/noExplicitAny: dynamic index generation
+    const indexes: Record<string, any> = {}
     for (const col of def.indexes) {
-      indexes[`${col}Idx`] = index().on((table as Record<string, unknown>)[col])
+      indexes[`${col}Idx`] = index().on(table[col])
     }
     return indexes
   })
