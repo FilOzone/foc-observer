@@ -62,6 +62,15 @@ app.all("/mcp", async (c) => {
 })
 
 await initParser()
+
+// Create read-only views in the public schema for agent queries. Idempotent
+// (CREATE OR REPLACE), so it's safe to re-run on every startup. Survives v2
+// reindexes — when the postgres volume is swapped, the view is recreated on
+// the next server boot.
+for (const client of ponderClients.values()) {
+  await client.bootstrapViews()
+}
+
 logStartup(PORT, ALL_NETWORKS, !!betterstack)
 console.log(`foc-observer server starting on port ${PORT}`)
 

@@ -26,8 +26,16 @@ export async function initParser(): Promise<void> {
 
 export const MAX_ROWS = 10000
 
-/** The set of real table names agents are allowed to query. */
-const ALLOWED_TABLES = new Set(Object.keys(TABLES))
+/**
+ * Read-only views over Ponder's internal sync tables, exposed in the public
+ * schema. These are NOT indexed event tables — they're derived views that
+ * surface per-tx metadata (target contract, function selector, gas) for gas
+ * analysis. See system-context.ts "Gas analysis" section.
+ */
+const ALLOWED_VIEWS = ["tx_meta"]
+
+/** The set of real table names (and exposed views) agents are allowed to query. */
+const ALLOWED_TABLES = new Set([...Object.keys(TABLES), ...ALLOWED_VIEWS])
 
 /**
  * Validate a SQL query for safe read-only execution.

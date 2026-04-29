@@ -27,6 +27,7 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   postgres-mainnet:
     image: postgres:18
@@ -41,6 +42,7 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   ponder-calibnet:
     build: indexer

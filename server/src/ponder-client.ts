@@ -81,6 +81,52 @@ export class PonderClient {
     }
   }
 
+  /**
+   * Create or refresh the read-only views we expose in the public schema for
+   * agent queries. Called at server startup so the views always exist regardless
+   * of whether the underlying postgres volume is fresh or carried over from a
+   * previous indexing run.
+   *
+   * Tolerates the case where Ponder's internal sync tables don't exist yet
+   * (e.g. fresh DB, ponder hasn't booted) — the view will be created on the
+   * next server startup once Ponder has populated its schema.
+   *
+   * Currently exposes:
+   * - tx_meta: per-tx target/selector/gas, joined from ponder_sync.transactions
+   *   and ponder_sync.transaction_receipts. Allow-listed in sql-validator.ts.
+   */
+  async bootstrapViews(): Promise<void> {
+    // CREATE OR REPLACE VIEW only permits appending columns, not reordering or
+    // renaming. New columns must go at the end of the SELECT list.
+    const ddl = `
+      CREATE OR REPLACE VIEW public.tx_meta AS
+      SELECT
+        t.hash                AS tx_hash,
+        t."to"                AS tx_to,
+        LEFT(t.input, 10)     AS tx_selector,
+        t."from"              AS tx_from,
+        t.value               AS tx_value,
+        t.block_number        AS block_number,
+        r.gas_used            AS gas_used,
+        r.effective_gas_price AS effective_gas_price,
+        r.status              AS status,
+        b.timestamp           AS timestamp
+      FROM ponder_sync.transactions t
+      JOIN ponder_sync.transaction_receipts r
+        ON r.transaction_hash = t.hash AND r.chain_id = t.chain_id
+      JOIN ponder_sync.blocks b
+        ON b.number = t.block_number AND b.chain_id = t.chain_id
+    `
+    try {
+      await this.queryRaw(ddl)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      // Not fatal — Ponder may not have created its sync tables yet on a fresh
+      // volume. The view will get created on the next server restart.
+      console.warn(`[bootstrap-views] ${this.network.name}: skipped tx_meta (${msg})`)
+    }
+  }
+
   async querySql(sql: string): Promise<SqlResult> {
     const { isExplain } = validateSql(sql)
 
@@ -138,16 +184,19 @@ export class PonderClient {
   }
 
   async listTables(): Promise<TableInfo[]> {
+    // Tables and views in the public schema. Views (like tx_meta) are surfaced
+    // alongside event tables so agents discover them via list_tables.
     const result = await this.queryRaw(`
-      SELECT tablename
-      FROM pg_catalog.pg_tables
-      WHERE schemaname = 'public'
-      ORDER BY tablename
+      SELECT tablename AS name, 'table' AS kind FROM pg_catalog.pg_tables WHERE schemaname = 'public'
+      UNION ALL
+      SELECT viewname  AS name, 'view'  AS kind FROM pg_catalog.pg_views  WHERE schemaname = 'public'
+      ORDER BY name
     `)
 
     const tables: TableInfo[] = []
     for (const row of result.rows as Record<string, unknown>[]) {
-      const name = row.tablename as string
+      const name = row.name as string
+      const kind = row.kind as string
       if (name.startsWith("_ponder") || name.startsWith("ponder_") || name.startsWith("_reorg__")) continue
 
       let rowCount = 0
@@ -160,11 +209,8 @@ export class PonderClient {
         // Table might not be queryable
       }
 
-      tables.push({
-        name,
-        rowCount,
-        description: TABLES[name]?.description ?? "",
-      })
+      const desc = TABLES[name]?.description ?? (kind === "view" ? "(view)" : "")
+      tables.push({ name, rowCount, description: desc })
     }
 
     return tables
