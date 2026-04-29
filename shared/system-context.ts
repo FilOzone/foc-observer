@@ -42,6 +42,8 @@ IMPORTANT - two-step activation:
 
 **"How healthy are providers?"** -> Deal/retrieval rates: get_dealbot_providers, get_dealbot_provider_detail. Proving fault rate: get_proving_health (primary, computed from indexed PDPVerifier events). Cross-validation: get_proving_health_goldsky (PDP Explorer subgraph). Error analysis: get_dealbot_failures.
 
+**"What does the protocol allow?" / "Can X do Y?" / "What happens when..."** -> Read the contract source or specs. Indexed data shows what HAS happened, NOT what the contract permits or how it is designed to behave. For capability and protocol-behavior questions, fetch the relevant SPEC.md, README, or .sol file from the URLs in "Source Code and References" below. Do NOT try to infer protocol rules from rail or event activity; that path is wrong for this question class even when the data has the shape of an answer.
+
 **Default to mainnet** unless the user asks about calibnet. Both are fully indexed.
 
 ## The Stack (layered, not monolithic)
@@ -95,14 +97,32 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 
 ## Source Code and References
 
-- **FWSS + SPRegistry + SessionKeyRegistry**: https://github.com/FilOzone/filecoin-services
-- **PDPVerifier**: https://github.com/FilOzone/pdp
-- **FilecoinPay**: https://github.com/FilOzone/filecoin-pay
-- **Synapse SDK** (client library): https://github.com/FilOzone/synapse-sdk
-- **DealBot** (quality assurance): https://github.com/FilOzone/dealbot
-- **Deployed contract addresses**: https://github.com/FilOzone/filecoin-services/blob/main/service_contracts/deployments.json
-- **DealBot dashboard**: https://dealbot.filoz.org (mainnet), https://staging.dealbot.filoz.org (calibnet)
-- **FilOz** (team): an independent public good Filecoin protocol design and development team in the Filecoin Network working on protocol improvements and security https://filoz.org`
+When a question is about protocol capability, expected behavior, or contract-level rules (lockup math, sybil-fee path, validator behavior, what calls are allowed when, what extraData fields mean), read the source rather than inferring from indexed data. The URLs below are raw GitHub blobs, suitable for direct WebFetch.
+
+**Specs and overviews** (start here for design intent, mechanics, lifecycle):
+- FilecoinPay README (rails, lockup, settlement, operators): https://raw.githubusercontent.com/FilOzone/filecoin-pay/main/README.md
+- FilecoinPay SPEC (deep payment-rail mechanics): https://raw.githubusercontent.com/FilOzone/filecoin-pay/main/SPEC.md
+- filecoin-services README: https://raw.githubusercontent.com/FilOzone/filecoin-services/main/README.md
+- filecoin-services SPEC (FWSS pricing, CDN architecture, settlement validation): https://raw.githubusercontent.com/FilOzone/filecoin-services/main/SPEC.md
+- PDPVerifier README (proof protocol, listener callbacks): https://raw.githubusercontent.com/FilOzone/pdp/main/README.md
+
+**Contract source** (read for exact validation, control flow, error conditions, modifier checks):
+- FWSS: https://raw.githubusercontent.com/FilOzone/filecoin-services/main/service_contracts/src/FilecoinWarmStorageService.sol
+- FilecoinPay: https://raw.githubusercontent.com/FilOzone/filecoin-pay/main/src/FilecoinPayV1.sol
+- PDPVerifier: https://raw.githubusercontent.com/FilOzone/pdp/main/src/PDPVerifier.sol
+- ServiceProviderRegistry: https://raw.githubusercontent.com/FilOzone/filecoin-services/main/service_contracts/src/ServiceProviderRegistry.sol
+- SessionKeyRegistry: https://raw.githubusercontent.com/FilOzone/SessionKeyRegistry/main/src/SessionKeyRegistry.sol
+
+**Repos and operational links**:
+- FWSS + SPRegistry: https://github.com/FilOzone/filecoin-services
+- PDPVerifier: https://github.com/FilOzone/pdp
+- FilecoinPay: https://github.com/FilOzone/filecoin-pay
+- SessionKeyRegistry: https://github.com/FilOzone/SessionKeyRegistry
+- Synapse SDK (client library): https://github.com/FilOzone/synapse-sdk
+- DealBot (quality assurance): https://github.com/FilOzone/dealbot
+- Deployed contract addresses: https://github.com/FilOzone/filecoin-services/blob/main/service_contracts/deployments.json
+- DealBot dashboard: https://dealbot.filoz.org (mainnet), https://staging.dealbot.filoz.org (calibnet)
+- FilOz (team): an independent public good Filecoin protocol design and development team working on protocol improvements and security: https://filoz.org`
 
 export const SYSTEM_CONTEXT = `# FOC Protocol Mechanics
 
