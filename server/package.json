@@ -21,7 +21,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^24",
+    "@types/node": "^25",
     "@types/pg": "^8.18.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
