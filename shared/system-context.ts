@@ -452,45 +452,19 @@ When interpreting data: events before ~epoch 3,414,500 (calibnet) / ~5,476,400 (
 
 ## Tool Data Provenance
 
-Each tool gets its data from a specific upstream source. When explaining results to users, cite the source and method.
+When explaining results to users, cite the source and any caveat:
 
-**Indexed event tools** (query_sql, list_tables, describe_table, get_status):
-- Source: Ponder EVM indexer writing to Postgres.
-- How: Ponder watches Filecoin blocks via Lotus RPC (eth_getLogs), decodes contract events using ABIs, writes rows to Postgres tables. One row per event emission. Transaction receipt data (gas_used, effective_gas_price, tx_from, tx_value) is fetched alongside each event.
-- Coverage: calibnet from epoch 3,155,000, mainnet from epoch 5,215,000. Both before v1.0.0 deployment.
-- Limitation: Only captures events that contracts emit. If an SP stops calling nextProvingPeriod, no fault events are emitted - silence in the data does NOT mean health. The fp_burn_for_fees table is special: indexed from transaction input data (no event emitted by the contract).
+**Indexed events** (query_sql, list_tables, describe_table, get_status): Ponder writes one row per emitted event to Postgres, with receipt fields (gas_used, effective_gas_price, tx_from, tx_value) attached. Coverage: calibnet from epoch 3,155,000; mainnet from epoch 5,215,000. Limitation: only captures emitted events. Silent SPs produce no fault events. \`fp_burn_for_fees\` is indexed from tx input (no event).
 
-**Live contract state tools** (get_providers, get_provider, get_dataset, get_dataset_proving, get_rail, get_pricing, get_account, get_auction):
-- Source: Direct eth_call to Filecoin via Lotus RPC using viem.
-- How: Reads current contract storage via view functions. get_providers calls ServiceProviderRegistry.providerCount(), then getProvider() for each, plus FWSS.isProviderApproved() and ProviderIdSet.has() for tier status. get_dataset calls FWSS StateView.getClientDataSetInfo(). get_rail calls FilecoinPay.getRail().
-- Coverage: Always current block. No history.
-- Limitation: A finalized rail (fully settled + zeroed) will revert on getRail(). This is expected, not an error.
+**Live state** (get_providers, get_provider, get_dataset, get_dataset_proving, get_rail, get_pricing, get_account, get_auction): direct eth_call via Lotus RPC. Always current block, no history. A finalized rail (settled + zeroed) reverts on getRail() by design.
 
-**Deal/retrieval quality tools** (get_dealbot_stats, get_dealbot_providers, get_dealbot_provider_detail, get_dealbot_daily):
-- Source: BetterStack ClickHouse, querying Prometheus counter metrics exported by DealBot.
-- How: DealBot (TypeScript/NestJS on K8s) continuously tests all registered SPs: 4 storage deals/SP/hour (96/day), 4 IPFS retrievals/SP/hour. Each test outcome increments a Prometheus counter (dataStorageStatus or retrievalStatus, labeled success/failure + providerId). BetterStack ingests these counters. Our ClickHouse queries compute delta per Prometheus series_id (to handle pod restart counter resets), then sum across series per provider.
-- Fields returned: providerId, providerName, providerStatus, totalDeals, dealSuccesses, dealFailures, dealSuccessRate, totalIpfsRetrievals, ipfsRetrievalSuccesses, ipfsRetrievalFailures, ipfsRetrievalSuccessRate.
-- Time windows: quantized to 1h/6h/12h/24h/72h/7d/30d/90d. Cached 5-60min depending on window.
-- Limitation: Sample counts are ~10-15% lower than DealBot's actual database due to Prometheus counter aggregation across pod restarts. Success RATES are accurate; absolute counts slightly understated. For authoritative absolute counts, dealbot.filoz.org is the source.
+**Deal/retrieval quality** (get_dealbot_*, except failures): BetterStack ClickHouse over Prometheus counters from DealBot (4 deals + 4 IPFS retrievals per SP per hour). Windows quantized to 1h/6h/12h/24h/72h/7d/30d/90d, cached 5-60min. Counts run ~10-15% low due to counter aggregation across pod restarts; rates are accurate. dealbot.filoz.org is the absolute-count source.
 
-**Failure analysis tool** (get_dealbot_failures):
-- Source: DealBot REST API directly (staging.dealbot.filoz.org/api for calibnet, dealbot.filoz.org/api for mainnet).
-- How: Calls /v1/metrics/failed-deals/summary and /v1/metrics/failed-retrievals/summary. These are recent failure aggregations from DealBot's own database (not Prometheus).
-- Fields: error messages, counts, affected providers. Error categories: "fetch failed" = SP unreachable, 502 = backend down, "LockupNotSettledRateChangeNotAllowed" = payment contract issue.
+**Failure analysis** (get_dealbot_failures): DealBot REST direct (\`/v1/metrics/failed-{deals,retrievals}/summary\`). Recent failures from DealBot's database, not Prometheus. Error categories include "fetch failed" (SP unreachable), 502 (backend down), "LockupNotSettledRateChangeNotAllowed" (payment contract).
 
-**Proving health tools** (get_proving_health, get_proving_dataset):
-- Source: Local computation from indexed PDPVerifier events (pdp_next_proving_period, pdp_possession_proven, pdp_data_set_created). Operator-agnostic: works for FWSS, Storacha, any future service contract.
-- How: The "proof-gap" method. For each pair of consecutive NextProvingPeriod events on a dataset, check whether a PossessionProven event exists in the window between them. No proof = fault. If the epoch gap spans multiple proving periods (SP went dark), the extra periods are inferred as skipped faults.
-- Proving period derivation: NOT hardcoded. Derived per-dataset from the mode (most common gap) of observed consecutive NextProvingPeriod events. Works for any listener's configured maxProvingPeriod (FWSS=2880, calibnet=240, or any future value).
-- Active dataset counting: A dataset is "active" only if it is not deleted, not emptied, AND has proved within the last 3 days. This avoids the ~35% inflation seen in the PDP Explorer subgraph's isActive field.
-- Fields: totalProvingPeriods (including inferred skipped periods), totalFaultedPeriods (observed faults + inferred skipped faults), faultRate (faulted/total * 100). Weekly breakdown includes per-week periods, faults, proofs, datasets created, pieces added.
-- Terminology: All counts are PROVING PERIODS, not individual challenges. The number of challenges per proof is listener-dependent (5 for FWSS) and is NOT assumed or multiplied.
+**Proving health** (get_proving_health, get_proving_dataset): local "proof-gap" computation over indexed PDPVerifier events. For each consecutive NextProvingPeriod pair on a dataset, a missing PossessionProven in the gap is a fault; multi-period gaps are inferred as skipped faults. Proving period is derived per-dataset from the mode of observed gaps (operator-agnostic: works for FWSS, Storacha, future services). "Active" requires not deleted, not emptied, and proved within 3 days. Counts are proving PERIODS, not challenges (challenges-per-proof is listener-specific and not multiplied).
 
-**Goldsky cross-validation tools** (get_proving_health_goldsky, get_proving_dataset_goldsky):
-- Source: PDP Explorer subgraph on Goldsky (independent computation, public GraphQL).
-- Use for cross-validation when accuracy is critical. Compare results with get_proving_health.
-- Known issues: hardcoded proving period (240 on mainnet, should be 2880, fix in PR #96), ~35% isActive inflation, hardcoded challengesPerProof=5, FWSS-centric service entities.
-- Numbers may differ slightly from local computation due to these issues. Where they diverge, the local computation is more trustworthy.
+**Goldsky cross-validation** (get_proving_health_goldsky, get_proving_dataset_goldsky): PDP Explorer subgraph, independent computation. Known issues: hardcoded proving period (240, PR #96 pending), ~35% isActive inflation, hardcoded challengesPerProof=5, FWSS-centric entities. Use for cross-check; trust local computation where they diverge.
 
 ## DealBot Quality Assurance
 
@@ -715,126 +689,13 @@ To investigate call-level metadata pressure, group fwss_piece_added by tx_hash:
 
 This is per-piece metadata only; the call's actual extraData also includes per-piece CID + structural overhead (~128 bytes/piece), so the full extraData is roughly \`SUM(LENGTH(metadata)) + pieces * 128\`. Clients with heavy metadata (e.g. Storacha's ID-keyed entries at ~77 bytes/piece) hit the 8192 ceiling at smaller batch sizes than a zero-metadata workload would.
 
-## HTTP API for Building Live Dashboards
+## Building dashboards
 
-The FOC Observer API at {{BASE_URL}} is a public, unauthenticated REST API with CORS enabled. You can build browser-based dashboards and interactive pages that fetch live data directly from this API using fetch(). No API key or authentication needed.
+The REST API at {{BASE_URL}} mirrors the MCP tool surface, with CORS enabled and no auth required. Endpoint shapes follow tool names: \`/sql\`, \`/providers/:network\`, \`/dataset/:network/:id\`, \`/rail/:network/:id\`, \`/metrics/*\`, \`/proving/*\`, \`/dealbot/*\`. \`/sql\` accepts the same SELECT-only payloads as query_sql with a 10,000-row cap. Sample counts in DealBot-backed metrics are ~10-15% lower than DealBot's database due to Prometheus counter aggregation; rates are accurate. For Claude.ai sandboxed artifacts, route through the Anthropic API with this MCP server attached (CSP blocks direct fetch); for standalone HTML or hosted apps, fetch() works directly.
 
-**Base URL**: {{BASE_URL}}
+## Block explorers
 
-**On-chain data endpoints** (backed by Ponder-indexed Postgres):
-
-POST /sql
-  Body: { "network": "calibnet", "sql": "SELECT ..." }
-  Returns: { "network": "calibnet", "columns": ["col1", ...], "rows": [{ "col1": "val", ... }], "rowCount": N }
-  Only SELECT/WITH/EXPLAIN queries allowed. Read-only. EXPLAIN ANALYZE is blocked.
-  Maximum 10,000 rows returned per query. If truncated, response includes "truncated": true and "totalRows".
-  Postgres system catalogs (pg_shadow, pg_catalog, information_schema, etc.) are blocked.
-  Use your own LIMIT clauses for large tables. For aggregation, GROUP BY reduces row count naturally.
-  Query timeout is 120 seconds. If a query times out, try: add LIMIT, narrow the timestamp range, avoid self-joins on large tables.
-  Large tables (100k+ rows): fwss_piece_added, fwss_fault_record, fp_rail_settled, fp_rail_rate_modified, pdp_next_proving_period, pdp_possession_proven.
-  Self-joins on these tables will likely time out. Use GROUP BY with aggregate functions instead. For piece duplication analysis, GROUP BY piece_cid is efficient; self-joining fwss_piece_added is not.
-  Indexed columns (fast to filter on): data_set_id, provider_id, rail_id, set_id, payer, payee, piece_cid (on fwss_piece_added), timestamp, source (on fwss_data_set_created).
-
-GET /status
-  Returns: [{ "name": "calibnet", "tables": 28, "totalRows": N, "reachable": true, ... }, ...]
-
-GET /tables/:network
-  Returns: { "network": "calibnet", "tables": [{ "name": "fwss_fault_record", "rowCount": N, "description": "..." }, ...] }
-
-GET /table/:network/:name
-  Returns: { "network": "calibnet", "table": "fwss_fault_record", "columns": [{ "name": "data_set_id", "type": "numeric", "nullable": false }, ...] }
-
-**Live contract state endpoints** (backed by Lotus RPC eth_call):
-
-GET /providers/:network
-  Returns: { "network": "calibnet", "providers": [{ "providerId": "2", "name": "ezpdpz-calib2", "isActive": true, "isApproved": true, "isEndorsed": false, ... }, ...] }
-
-GET /provider/:network/:id
-  Returns: { "network": "calibnet", "providerId": "2", "name": "ezpdpz-calib2", ... }
-
-GET /dataset/:network/:id
-  Returns: { "network": "calibnet", "dataSetId": "11141", "providerId": "6", "metadata": { "source": "dealbot" }, ... }
-
-GET /dataset/:network/:id/proving
-  Returns: { "network": "calibnet", "live": true, "provenThisPeriod": false, "provingDeadline": "3543000", ... }
-
-GET /rail/:network/:id
-  Returns: { "network": "calibnet", "railId": "13602", "paymentRateFormatted": "0.000000694 USDFC/epoch", ... }
-
-GET /pricing/:network
-  Returns: { "network": "calibnet", "storagePriceFormatted": "2.5 USDFC/TiB/month", ... }
-
-GET /auction/:network/:token
-  Returns: { "network": "mainnet", "accumulatedFeesFormatted": "0.90 USDFC", "networkFeePercent": "0.50%", ... }
-  Token is the ERC-20 address (USDFC or FIL). Shows current fee auction state.
-
-GET /account/:network/:token/:owner
-  Returns: { "network": "mainnet", "funds": "...", "lockupCurrent": "...", "availableFunds": "...", "fundedUntilEpoch": "...", ... }
-  Token + owner address. Shows balance, lockup, solvency.
-
-**Deal/retrieval metrics endpoints** (backed by BetterStack ClickHouse Prometheus data):
-
-GET /metrics/providers/:network?hours=72
-  Returns: { "network": "calibnet", "hours": 72, "providers": [{ "providerId": "2", "dealSuccessRate": 95.5, "ipfsRetrievalSuccessRate": 98.2, ... }, ...] }
-
-GET /metrics/provider/:network/:id?hours=72
-  Returns: { "network": "calibnet", "hours": 72, "providerId": "2", "dealSuccessRate": 95.5, ... }
-
-GET /metrics/network/:network?hours=72
-  Returns: { "network": "calibnet", "hours": 72, "totalDeals": 1500, "dealSuccessRate": 45.2, ... }
-
-GET /metrics/providers/:network?hours=168&bucket=24h
-  Returns: { "network": "calibnet", "hours": 168, "bucket": "24h", "data": [{ "bucket": "2026-03-14 00:00:00", "providerId": "2", ... }, ...] }
-
-**Proving health endpoints** (backed by PDP Explorer subgraph via Goldsky GraphQL):
-
-GET /proving/providers/:network
-  Returns: { "network": "calibnet", "providers": [{ "address": "0x...", "totalFaultedPeriods": 127669, "totalProvingPeriods": 1196637, "faultRate": 10.67, ... }, ...] }
-
-GET /proving/provider/:network/:address?weeks=4
-  Returns: { "network": "calibnet", "provider": { "address": "0x...", "faultRate": 10.67, ... }, "weeklyActivity": [...], "datasets": [...] }
-
-GET /proving/dataset/:network/:setId
-  Returns: { "network": "calibnet", "setId": "11141", "isActive": true, "provenThisPeriod": false, "totalFaultedPeriods": 424, ... }
-
-**DealBot API (direct, for agent queries):**
-
-When YOU are querying DealBot data (via MCP tools or direct analysis), the MCP tools call DealBot directly. For reference, the direct DealBot API endpoints are:
-
-Mainnet base: https://dealbot.filoz.org/api
-Calibnet base: https://staging.dealbot.filoz.org/api
-
-GET /v1/metrics/network/stats - network-wide quality metrics
-GET /v1/providers/metrics?limit=100 - all providers with weekly + all-time health scores
-GET /v1/providers/metrics/:spAddress/window?preset=7d - single provider time window (presets: 1h, 6h, 12h, 24h, 72h, 3d, 7d, 30d, 90d)
-GET /v1/metrics/daily/recent?days=7 - daily trend metrics
-GET /v1/metrics/failed-deals/summary - deal failure analysis
-GET /v1/metrics/failed-retrievals/summary - retrieval failure analysis
-
-**DealBot proxy endpoints (for browser dashboards):**
-
-DealBot's own API blocks cross-origin browser requests (same-origin policy). When building client-side dashboards or standalone HTML, use these CORS-enabled proxies on the FOC Observer API instead:
-
-GET /dealbot/stats/:network
-GET /dealbot/providers/:network
-GET /dealbot/provider/:network/:addr?preset=7d
-GET /dealbot/daily/:network?days=7
-GET /dealbot/failures/:network
-
-All return JSON with a "network" field. Same data, different origin.
-
-## Block Explorers
-
-Use these to link transaction hashes to block explorer pages:
-
-Calibnet: https://filecoin-testnet.blockscout.com/tx/{txHash}
-Mainnet:  https://filecoin.blockscout.com/tx/{txHash}
-
-Alternative explorers:
-- Filfox: https://calibration.filfox.info/en/tx/{txHash} (calibnet), https://filfox.info/en/tx/{txHash} (mainnet)
-- Beryx: https://beryx.io (supports both networks)
-
-Blockscout is the default explorer in the FOC SDK stack.
+Mainnet: \`https://filecoin.blockscout.com/tx/{txHash}\`. Calibnet: \`https://filecoin-testnet.blockscout.com/tx/{txHash}\`. Filfox and Beryx also available; Blockscout is the SDK stack default.
 
 ## Transaction and Event Metadata
 
@@ -857,48 +718,4 @@ Gas cost in FIL = gas_used * effective_gas_price / 1e18. To analyze gas costs:
 To link to a block explorer: use tx_hash with the explorer URL templates (see Block Explorers section).
 For the fp_burn_for_fees table, the id format is {blockHash}-{transactionIndex} (indexed from transactions, not events).
 
-## Building Dashboards and Applications
-
-### Data conventions for display
-- Amounts: bigint strings with 18 decimals. Divide by 1e18 for human-readable USDFC/FIL.
-- Timestamps: unix seconds in database. Use new Date(timestamp * 1000) in JavaScript.
-- Epochs: Filecoin block heights. Each epoch is ~30 seconds. To convert epoch to approximate date: new Date((epoch * 30 + genesisTimestamp) * 1000).
-
-### Tool approval in Claude.ai
-If a tool call returns "No approval received", this means the user hasn't clicked the approve button in the Claude.ai UI. This is a Claude.ai UX issue, not an MCP error. Ask the user to approve the tool call, or retry.
-
-### Data fidelity note
-The get_dealbot_stats/providers/provider_detail/daily tools are backed by BetterStack Prometheus counter data. Sample counts may be ~10-15% lower than DealBot's actual database counts due to Prometheus counter aggregation across pod restarts. Success RATES are accurate; absolute counts are slightly understated. For authoritative absolute counts, the DealBot web dashboard at dealbot.filoz.org is the source of truth.
-
-### Deployment contexts
-
-**Claude.ai artifacts (sandboxed iframe):**
-Artifacts in claude.ai run in a sandboxed iframe with a strict CSP that only allows requests to CDN domains (cdnjs.cloudflare.com, esm.sh, cdn.jsdelivr.net, unpkg.com). Direct fetch() to the FOC Observer server or any external API is blocked by CSP. To build live artifacts, route requests through the Anthropic API with this MCP server attached. Use sequential (not parallel) requests to avoid concurrency rate limits. Expect ~10s per MCP tool call.
-
-**Standalone HTML (downloaded, opened locally):**
-Direct fetch() to the FOC Observer REST API works from any local browser context. CORS is enabled on all endpoints. Use the /dealbot/* proxy endpoints for DealBot data (DealBot's own API blocks cross-origin requests).
-
-**Hosted web application:**
-Same as standalone. All data available from one CORS-enabled origin (the FOC Observer server). Use /sql for analytics, /providers for directory, /dealbot/* for quality metrics. No authentication required.
-
-### Minimal fetch example
-\`\`\`javascript
-// Query on-chain fault data
-const res = await fetch('{{BASE_URL}}/sql', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    network: 'calibnet',
-    sql: "SELECT provider_id, COUNT(*) as faults FROM fwss_fault_record GROUP BY provider_id"
-  })
-});
-const { columns, rows } = await res.json();
-
-// Get provider names
-const provRes = await fetch('{{BASE_URL}}/providers/calibnet');
-const { providers } = await provRes.json();
-
-// Get DealBot metrics (via proxy)
-const dbRes = await fetch('{{BASE_URL}}/dealbot/stats/calibnet');
-const stats = await dbRes.json();
-\`\`\``
+`
