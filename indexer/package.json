@@ -10,7 +10,7 @@
     "typecheck": "ln -sf ponder.config.mainnet.ts ponder.config.ts && RPC_URL=http://localhost:1234 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen && tsc --noEmit; rc=$?; rm -f ponder.config.ts; exit $rc"
   },
   "dependencies": {
-    "hono": "^4.5",
+    "hono": "^4.12",
     "multiformats": "^13",
     "ponder": "npm:@rvagg/ponder@^0.16.6",
     "viem": "^2.23"
