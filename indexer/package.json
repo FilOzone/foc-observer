@@ -13,7 +13,7 @@
     "hono": "^4.12",
     "multiformats": "^13",
     "ponder": "npm:@rvagg/ponder@^0.16.6",
-    "viem": "^2.23"
+    "viem": "^2.48"
   },
   "overrides": {
     "@hono/node-server": "^1.19.13",
