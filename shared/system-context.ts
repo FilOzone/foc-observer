@@ -65,6 +65,8 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 
 **CRITICAL: FilecoinPay is operator-agnostic.** Multiple service contracts use it independently. For network-wide aggregate metrics (total deposits, total settlements, ARR), always start from fp_* tables without joining to fwss_* tables. Only narrow to fwss_* when analyzing FWSS-specific behavior. fwss_* events only fire for FWSS-operated rails; storacha_fwss_* events only fire for Storacha-operated rails. PDPVerifier events (pdp_* tables) and FilecoinPay events (fp_* tables) cover BOTH service contracts since they share the underlying infrastructure.
 
+**PDPVerifier is similarly listener-agnostic.** Datasets may use any listener address (FWSS, Storacha FWSS, custom, or zero-address for no callbacks). Listener is NOT in \`pdp_data_set_created\` events. To identify: LEFT JOIN set_id to fwss_data_set_created and storacha_fwss_data_set_created. Rows in neither are non-FWSS listeners (raw PDP, custom service contracts, abandoned deployments). To resolve the actual address, eth_call \`PDPVerifier.getDataSetListener(uint256)\` (selector \`0x2b3129bb\`). Similarly, fp_rail_created.operator may name any service contract, not only those with fwss_/storacha_fwss_ tables - group by operator to discover unindexed services.
+
 **Provider tiers** (each a subset of the previous):
 1. **Registered** (isActive): in ServiceProviderRegistry. Any SP can register.
 2. **Approved** (isApproved): passes DealBot quality checks. Can be secondary copy target.
@@ -192,7 +194,7 @@ SELECT d.* FROM fwss_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM fwss_ser
 
 **Data set state from get_dataset()**:
 - pdpEndEpoch = 0: active. pdpEndEpoch > 0: terminated (check against current epoch to distinguish lockup-running vs post-lockup).
-- metadata["source"] identifies the creating application. DealBot datasets have source "dealbot" (current) or "filecoin-pin" or NULL (historical, before source fix). Filter by payer address for reliable DealBot identification, not source metadata alone.
+- metadata["source"] identifies the creating application. DealBot data sets carry source values "dealbot", "filecoin-pin", or NULL across different rows. Filter by payer address for reliable DealBot identification, not source metadata alone.
 - metadata["withCDN"] = "true" means CDN rails are active.
 - providerId links to ServiceProviderRegistry for SP details.
 
@@ -424,9 +426,10 @@ Calibnet's 12x proving frequency generates 12x the events (proofs, faults, settl
 The current FOC contracts (same proxy addresses) were deployed across two releases. All data in the indexed tables originates from these deployments.
 
 **v1.0.0 - GA Release (November 2, 2025)**
-- First deployment of the current proxy addresses on both networks.
-- Calibnet: ~epoch 3,158,000. Indexed from epoch 3,155,000.
-- Mainnet: ~epoch 5,220,000. Indexed from epoch 5,215,000.
+- Deployment of the current proxy addresses on both networks.
+- Calibnet proxy deployment: FilecoinPay ~epoch 3,120,400 (2025-10-20), PDPVerifier/FWSS/SPRegistry ~epoch 3,141,300 (2025-10-27). First indexed event: fp_deposit at block 3,125,196 (2025-10-21).
+- Mainnet proxy deployment: FilecoinPay ~epoch 5,425,000, PDPVerifier ~5,441,500, FWSS ~5,459,500. First indexed event: fp_deposit at block 5,465,823 (2025-11-04) - ~40k epoch gap between deployment and first user activity.
+- For a precise indexed-from block per network, query \`MIN(block_number)\` on a high-coverage table (e.g. \`fp_deposit\`). The \`--startBlock\` in \`indexer/ponder.config.<network>.ts\` sits below first activity.
 - Introduced: FWSS GA contracts, FilecoinPay v1, PDPVerifier v3.1.0, ServiceProviderRegistry with capability key-value store, SessionKeyRegistry.
 - Source: [filecoin-services v1.0.0](https://github.com/FilOzone/filecoin-services/releases/tag/v1.0.0)
 
@@ -446,7 +449,7 @@ The current FOC contracts (same proxy addresses) were deployed across two releas
 
 To query upgrade history: SELECT contract, version, implementation, TO_TIMESTAMP(timestamp) as upgraded_at FROM contract_upgraded ORDER BY block_number. This shared table covers PDPVerifier, FWSS, and SPRegistry upgrades.
 
-**Earlier deployments (v0.2.0, v0.3.0)** used different proxy addresses and are not indexed. Data from those deployments is not available.
+**Orphan rails from defunct service contracts**: FilecoinPay is shared; rails created by pre-v1.0.0 FWSS or other abandoned operators persist in fp_* with no matching fwss_data_set_created. Filter \`fp_rail_created.operator\` to scope aggregates. Known abandoned operator: calibnet 0xd3de778c05f89e1240ef70100fb0d9e5b2efd258 (rails 1-23, pre-v1.0.0 FWSS, never settle).
 
 When interpreting data: events before ~epoch 3,414,500 (calibnet) / ~5,476,400 (mainnet) were under v1.0.0 semantics. Events after are under v1.1.0. v1.2.0 added the sybil fee mechanism - data sets created after v1.2.0 deposit 0.1 USDFC into the auction pool.
 
@@ -610,13 +613,12 @@ Always show sample counts alongside rates.
 
 **Partitioning by application**: The source column on fwss_data_set_created identifies which application created each data set (e.g. "filecoin-pin", "synapse-example"). To scope analysis to a specific dapp, filter WHERE source = 'filecoin-pin'. NULL source includes early data sets and apps that haven't adopted the source convention.
 
-**Identifying DealBot data sets**: DealBot has two wallet addresses and three historical source metadata values. To reliably capture all DealBot traffic, filter by BOTH payer addresses:
-- Legacy wallet (both networks): 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71
-- Current multisig (both networks, from April 2026): 0x305025D07c1DEe47F25a4990179eFf2becddCA0B
-- Source metadata history: NULL (early datasets), "filecoin-pin" (due to a metadata override bug, ~Mar 2026), "dealbot" (current, from April 2026 onward)
+**Identifying DealBot data sets**: DealBot operates from two wallet addresses, and existing rows hold three different \`source\` values. The payer addresses are the reliable identifier; source is not.
+- Single-sig wallet (both networks): 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71
+- Multisig wallet (both networks): 0x305025D07c1DEe47F25a4990179eFf2becddCA0B
+- \`source\` values present in existing rows: NULL, "filecoin-pin", "dealbot". Don't filter on source.
 - To include all DealBot data: WHERE payer IN ('0xa5f90bc2aa73a2e0bad4d7092a932644d5dd5d71', '0x305025d07c1dee47f25a4990179eff2becddca0b')
 - To exclude all DealBot data: WHERE payer NOT IN ('0xa5f90bc2aa73a2e0bad4d7092a932644d5dd5d71', '0x305025d07c1dee47f25a4990179eff2becddca0b')
-- Do NOT rely on source metadata alone to identify DealBot datasets due to the historical inconsistency.
 
 **Session keys for a signer**: The same identity+signer pair can be updated multiple times. To find currently active session keys, take the latest event per identity+signer and check expiry against the current epoch:
 WITH latest AS (SELECT DISTINCT ON (identity, signer) * FROM skr_authorizations_updated WHERE signer = '0x...' ORDER BY identity, signer, block_number DESC) SELECT * FROM latest WHERE expiry > CURRENT_EPOCH

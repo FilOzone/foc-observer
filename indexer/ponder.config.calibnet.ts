@@ -26,8 +26,9 @@ const CALIBNET = {
   ],
 } as const
 
-// v1.0.0 deployed ~epoch 3,158,000 on calibnet (Nov 2, 2025). Start slightly before.
-const START_BLOCK = 3_155_000
+// Snapshot floor is 3,090,000 (null round); start +2 so the parent is valid.
+// Captures FilecoinPay rail 1 (3,125,305) and PDPVerifier sets 1-48 (3,144,601 onward).
+const START_BLOCK = 3_090_002
 
 export default createConfig({
   database: {
