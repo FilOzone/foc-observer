@@ -53,10 +53,13 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgres://ponder:ponder@postgres-calibnet:5432/ponder
-      DATABASE_SCHEMA: public
       RPC_URL: ${CALIBNET_RPC_URL:?}
       PORT: 17827
       PONDER_EXPERIMENTAL_DB: platform
+    # Writes tables to data_v1; auto-creates views in public so server queries
+    # unqualified table names. Bump --schema (and rename the prior one or drop it)
+    # for the next reindex. See CLAUDE.md "Re-indexing".
+    command: ["npm", "start", "--", "--schema", "data_v1", "--views-schema", "public"]
     restart: unless-stopped
     volumes:
       - ./indexer/ponder.config.calibnet.ts:/app/ponder.config.ts

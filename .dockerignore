@@ -17,3 +17,10 @@ indexer/ponder.config*.ts
 indexer/ponder.schema.ts
 indexer/package.json
 indexer/tsconfig.json
+
+# Locally-generated prebuild copies. The Dockerfile re-copies these from their
+# canonical locations (shared/, indexer/src/) so the in-tree duplicates would
+# silently overwrite the fresh copies on `COPY server/src/`.
+server/src/system-context.ts
+server/src/table-metadata.ts
+server/src/schema-defs.ts
