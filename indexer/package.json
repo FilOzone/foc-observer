@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "hono": "^4.12",
-    "multiformats": "^13",
+    "multiformats": "^14",
     "ponder": "npm:@rvagg/ponder@0.16.6-filecoin.1",
     "viem": "^2.50"
   },
