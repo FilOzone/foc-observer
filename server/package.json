@@ -16,7 +16,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "hono": "^4",
     "libpg-query": "^17.7.3",
-    "pg": "^8.18.0",
+    "pg": "^8.21.0",
     "viem": "^2.50.4",
     "zod": "^4.4.3"
   },
