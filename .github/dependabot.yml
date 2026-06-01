@@ -2,32 +2,25 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
-    open-pull-requests-limit: 5
     schedule:
       interval: monthly
     cooldown:
       default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   - package-ecosystem: npm
-    directory: /client
-    open-pull-requests-limit: 5
+    directories:
+      - /client
+      - /server
+      - /indexer
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 5
     cooldown:
       default-days: 7
-
-  - package-ecosystem: npm
-    directory: /server
-    open-pull-requests-limit: 5
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-
-  - package-ecosystem: npm
-    directory: /indexer
-    open-pull-requests-limit: 5
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
