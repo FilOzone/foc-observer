@@ -48,8 +48,6 @@ ponder.on("FilecoinPayAccount:transaction:to", async ({ event, context }) => {
       id: txEventId(event),
       token, recipient,
       requestedAmount: requested,
-      filBurned: transaction.value,
-      caller: transaction.from,
       ...eventMeta(event),
     })
 })

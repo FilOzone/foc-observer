@@ -24,13 +24,11 @@ export interface TableDef {
   indexes?: string[]
 }
 
+// tx_from, tx_value, gas_used, effective_gas_price live in public.tx_meta
+// (backed by ponder_sync). Join via tx_hash.
 export const STANDARD_COLUMNS: Record<string, ColDef> = {
   id: { type: "text", note: "blockHash-logIndex" },
-  txHash: { type: "hex" },
-  txFrom: { type: "hex", note: "sender" },
-  txValue: { type: "bigint", note: "FIL sent (18 dec)" },
-  gasUsed: { type: "bigint" },
-  effectiveGasPrice: { type: "bigint" },
+  txHash: { type: "hex", note: "join key for tx_meta" },
   blockNumber: { type: "bigint", note: "epoch" },
   timestamp: { type: "bigint", note: "unix seconds" },
 }
@@ -52,7 +50,7 @@ export const TABLES: Record<string, TableDef> = {
       challengeEpoch: { type: "bigint" },
       leafCount: { type: "bigint" },
     },
-    indexes: ["setId", "timestamp"],
+    indexes: ["setId", "blockNumber"],
   },
   pdp_proof_fee_paid: {
     description: "FIL proof fee paid on dataset creation",
@@ -60,7 +58,7 @@ export const TABLES: Record<string, TableDef> = {
       setId: { type: "bigint" },
       fee: { type: "bigint", note: "FIL, 18 dec" },
     },
-    indexes: ["setId", "timestamp"],
+    indexes: ["setId", "blockNumber"],
   },
   pdp_possession_proven: {
     description: "Proof submission with challenge details",
@@ -69,7 +67,7 @@ export const TABLES: Record<string, TableDef> = {
       challengeCount: { type: "int", nullable: true },
       challenges: { type: "text", nullable: true, note: "JSON [{pieceId: int, offset: string}]" },
     },
-    indexes: ["setId", "timestamp"],
+    indexes: ["setId", "blockNumber"],
   },
   pdp_data_set_deleted: {
     description: "Dataset deletion",
@@ -95,7 +93,7 @@ export const TABLES: Record<string, TableDef> = {
       pieceCount: { type: "int" },
       pieceIds: { type: "text", nullable: true, note: "JSON [int]" },
     },
-    indexes: ["setId", "timestamp"],
+    indexes: ["setId", "blockNumber"],
   },
   pdp_storage_provider_changed: {
     description: "Dataset transferred to new SP",
@@ -138,7 +136,7 @@ export const TABLES: Record<string, TableDef> = {
       withCDN: { type: "bool" },
       metadata: { type: "text", nullable: true, note: "JSON key-value pairs" },
     },
-    indexes: ["dataSetId", "providerId", "payer", "serviceProvider", "payee", "pdpRailId", "source", "timestamp"],
+    indexes: ["dataSetId", "providerId", "payer", "serviceProvider", "payee", "pdpRailId", "source", "blockNumber"],
   },
   fwss_piece_added: {
     description: "Piece added to FWSS dataset",
@@ -149,7 +147,7 @@ export const TABLES: Record<string, TableDef> = {
       rawSize: { type: "bigint", note: "bytes, from PieceCIDv2" },
       metadata: { type: "text", nullable: true, note: "JSON key-value pairs" },
     },
-    indexes: ["dataSetId", "pieceId", "pieceCid", "timestamp"],
+    indexes: ["dataSetId", "pieceId", "pieceCid", "blockNumber"],
   },
   fwss_fault_record: {
     description: "Proving fault, SP missed deadline",
@@ -158,7 +156,7 @@ export const TABLES: Record<string, TableDef> = {
       periodsFaulted: { type: "bigint", note: "consecutive misses" },
       deadline: { type: "bigint", note: "epoch" },
     },
-    indexes: ["dataSetId", "timestamp"],
+    indexes: ["dataSetId", "blockNumber"],
   },
   fwss_rail_rate_updated: {
     description: "Payment rate change on dataset rail",
@@ -167,7 +165,7 @@ export const TABLES: Record<string, TableDef> = {
       railId: { type: "bigint" },
       newRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },
     },
-    indexes: ["dataSetId", "railId", "timestamp"],
+    indexes: ["dataSetId", "railId", "blockNumber"],
   },
   fwss_service_terminated: {
     description: "Service termination via terminateService. approver is the EIP-712 authorizer (payer, payer's session key, or SP); not necessarily tx.from. Mutual termination (payer signs, SP submits) is indistinguishable from payer-initiated here.",
@@ -178,7 +176,7 @@ export const TABLES: Record<string, TableDef> = {
       cacheMissRailId: { type: "bigint" },
       cdnRailId: { type: "bigint" },
     },
-    indexes: ["dataSetId", "pdpRailId", "approver", "timestamp"],
+    indexes: ["dataSetId", "pdpRailId", "approver", "blockNumber"],
   },
   fwss_data_set_abandoned: {
     description: "Dataset reaped via abandonment path: third party called PDPVerifier.deleteDataSet after PDP_INACTIVITY_WINDOW elapsed with no terminateService. Lifecycle endpoint distinct from ServiceTerminated. v1.3.0+.",
@@ -319,7 +317,7 @@ export const TABLES: Record<string, TableDef> = {
       serviceFeeRecipient: { type: "hex" },
       commissionRateBps: { type: "bigint", note: "basis points" },
     },
-    indexes: ["railId", "payer", "payee", "token", "operator", "timestamp"],
+    indexes: ["railId", "payer", "payee", "token", "operator", "blockNumber"],
   },
   fp_rail_settled: {
     description: "Settlement (amounts INCREMENTAL per event, SUM for totals)",
@@ -331,7 +329,7 @@ export const TABLES: Record<string, TableDef> = {
       networkFee: { type: "bigint" },
       settledUpTo: { type: "bigint", note: "epoch, cumulative" },
     },
-    indexes: ["railId", "timestamp"],
+    indexes: ["railId", "blockNumber"],
   },
   fp_rail_terminated: {
     description: "Rail terminated",
@@ -340,7 +338,7 @@ export const TABLES: Record<string, TableDef> = {
       by: { type: "hex" },
       endEpoch: { type: "bigint" },
     },
-    indexes: ["railId", "timestamp"],
+    indexes: ["railId", "blockNumber"],
   },
   fp_rail_finalized: {
     description: "Rail fully settled and zeroed",
@@ -355,7 +353,7 @@ export const TABLES: Record<string, TableDef> = {
       to: { type: "hex" },
       amount: { type: "bigint", note: "18 dec" },
     },
-    indexes: ["to", "from", "timestamp"],
+    indexes: ["to", "from", "blockNumber"],
   },
   fp_withdrawal: {
     description: "Token withdrawal",
@@ -365,7 +363,7 @@ export const TABLES: Record<string, TableDef> = {
       to: { type: "hex" },
       amount: { type: "bigint", note: "18 dec" },
     },
-    indexes: ["from", "timestamp"],
+    indexes: ["from", "blockNumber"],
   },
   fp_rail_rate_modified: {
     description: "Payment rate change on rail",
@@ -374,7 +372,7 @@ export const TABLES: Record<string, TableDef> = {
       oldRate: { type: "bigint" },
       newRate: { type: "bigint" },
     },
-    indexes: ["railId", "timestamp"],
+    indexes: ["railId", "blockNumber"],
   },
   fp_operator_approval: {
     description: "Operator approval granted/revoked",
@@ -422,15 +420,13 @@ export const TABLES: Record<string, TableDef> = {
     indexes: ["railId"],
   },
   fp_burn_for_fees: {
-    description: "FIL burned via fee auction (no event, from tx data)",
+    description: "FIL burned via fee auction. No event - row exists because the tx called burnForFees on FilecoinPay. requestedAmount comes from decoded input (USDFC claimed). For the FIL burned and the caller, JOIN tx_meta USING (tx_hash): tx_meta.tx_value is the FIL sent (= burned), tx_meta.tx_from is the caller.",
     columns: {
       token: { type: "hex" },
       recipient: { type: "hex" },
       requestedAmount: { type: "bigint" },
-      filBurned: { type: "bigint" },
-      caller: { type: "hex" },
     },
-    indexes: ["token", "timestamp"],
+    indexes: ["token", "blockNumber"],
   },
 
   // -- ServiceProviderRegistry --
@@ -506,7 +502,7 @@ export const TABLES: Record<string, TableDef> = {
       cdnBytesUsed: { type: "bigint", note: "TOTAL egress bytes including cache misses; cache_hit_ratio = 1 - (cache_miss / cdn)" },
       cacheMissBytesUsed: { type: "bigint", note: "SUBSET of cdn_bytes_used; bytes that required origin fetch from SP" },
     },
-    indexes: ["dataSetId", "operator", "timestamp"],
+    indexes: ["dataSetId", "operator", "blockNumber"],
   },
   fb_cdn_settlement: {
     description: "CDN payment rail settled by FilBeam (joins to fwss_data_set_created.cdn_rail_id)",
@@ -515,7 +511,7 @@ export const TABLES: Record<string, TableDef> = {
       dataSetId: { type: "bigint" },
       cdnAmount: { type: "bigint", note: "USDFC settled in this event, capped to rail lockupFixed" },
     },
-    indexes: ["dataSetId", "operator", "timestamp"],
+    indexes: ["dataSetId", "operator", "blockNumber"],
   },
   fb_cache_miss_settlement: {
     description: "Cache-miss payment rail settled by FilBeam (joins to fwss_data_set_created.cache_miss_rail_id)",
@@ -524,7 +520,7 @@ export const TABLES: Record<string, TableDef> = {
       dataSetId: { type: "bigint" },
       cacheMissAmount: { type: "bigint", note: "USDFC settled in this event, capped to rail lockupFixed" },
     },
-    indexes: ["dataSetId", "operator", "timestamp"],
+    indexes: ["dataSetId", "operator", "blockNumber"],
   },
   fb_payment_rails_terminated: {
     description: "FilBeam-initiated CDN service termination, calls FWSS.terminateCDNService",
@@ -580,7 +576,7 @@ export const TABLES: Record<string, TableDef> = {
       withCDN: { type: "bool" },
       metadata: { type: "text", nullable: true, note: "JSON key-value pairs" },
     },
-    indexes: ["dataSetId", "providerId", "payer", "serviceProvider", "payee", "pdpRailId", "source", "timestamp"],
+    indexes: ["dataSetId", "providerId", "payer", "serviceProvider", "payee", "pdpRailId", "source", "blockNumber"],
   },
   storacha_fwss_piece_added: {
     description: "Piece added to Storacha FWSS dataset",
@@ -591,7 +587,7 @@ export const TABLES: Record<string, TableDef> = {
       rawSize: { type: "bigint", note: "bytes, from PieceCIDv2" },
       metadata: { type: "text", nullable: true, note: "JSON key-value pairs" },
     },
-    indexes: ["dataSetId", "pieceId", "pieceCid", "timestamp"],
+    indexes: ["dataSetId", "pieceId", "pieceCid", "blockNumber"],
   },
   storacha_fwss_fault_record: {
     description: "Storacha FWSS proving fault, SP missed deadline",
@@ -600,7 +596,7 @@ export const TABLES: Record<string, TableDef> = {
       periodsFaulted: { type: "bigint", note: "consecutive misses" },
       deadline: { type: "bigint", note: "epoch" },
     },
-    indexes: ["dataSetId", "timestamp"],
+    indexes: ["dataSetId", "blockNumber"],
   },
   storacha_fwss_rail_rate_updated: {
     description: "Storacha FWSS payment rate change on dataset rail",
@@ -609,7 +605,7 @@ export const TABLES: Record<string, TableDef> = {
       railId: { type: "bigint" },
       newRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },
     },
-    indexes: ["dataSetId", "railId", "timestamp"],
+    indexes: ["dataSetId", "railId", "blockNumber"],
   },
   storacha_fwss_service_terminated: {
     description: "Storacha FWSS full service termination. Storacha tracks v1.2.x (caller = tx sender), no v1.3.0 approver semantics.",
@@ -620,7 +616,7 @@ export const TABLES: Record<string, TableDef> = {
       cacheMissRailId: { type: "bigint" },
       cdnRailId: { type: "bigint" },
     },
-    indexes: ["dataSetId", "pdpRailId", "caller", "timestamp"],
+    indexes: ["dataSetId", "pdpRailId", "caller", "blockNumber"],
   },
   storacha_fwss_pricing_updated: {
     description: "Storacha FWSS global storage pricing change. Storacha tracks v1.2.x where PricingUpdated is still active.",
