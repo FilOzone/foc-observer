@@ -106,25 +106,6 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "function",
-    "name": "calculateRatePerEpoch",
-    "inputs": [
-      {
-        "name": "totalBytes",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "storageRate",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "configureProvingPeriod",
     "inputs": [
       {
@@ -302,7 +283,7 @@ export const FilecoinWarmStorageServiceAbi = [
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -364,7 +345,7 @@ export const FilecoinWarmStorageServiceAbi = [
             "internalType": "uint256"
           },
           {
-            "name": "minimumPricePerMonth",
+            "name": "datasetFeePerMonth",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -751,6 +732,24 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "function",
+    "name": "terminateService",
+    "inputs": [
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "extraData",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "topUpCDNPaymentRails",
     "inputs": [
       {
@@ -765,6 +764,24 @@ export const FilecoinWarmStorageServiceAbi = [
       },
       {
         "name": "cacheMissAmountToAdd",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "topUpLifecycleReserve",
+    "inputs": [
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -793,37 +810,6 @@ export const FilecoinWarmStorageServiceAbi = [
         "name": "newOwner",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updatePricing",
-    "inputs": [
-      {
-        "name": "newStoragePrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newMinimumRate",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateServiceCommission",
-    "inputs": [
-      {
-        "name": "newCommissionBps",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -931,43 +917,6 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "event",
-    "name": "CDNPaymentRailsToppedUp",
-    "inputs": [
-      {
-        "name": "dataSetId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cdnAmountAdded",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalCdnLockup",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cacheMissAmountAdded",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalCacheMissLockup",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "CDNPaymentTerminated",
     "inputs": [
       {
@@ -980,37 +929,6 @@ export const FilecoinWarmStorageServiceAbi = [
         "name": "endEpoch",
         "type": "uint256",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cacheMissRailId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cdnRailId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CDNServiceTerminated",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "dataSetId",
-        "type": "uint256",
-        "indexed": true,
         "internalType": "uint256"
       },
       {
@@ -1311,25 +1229,6 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "event",
-    "name": "PricingUpdated",
-    "inputs": [
-      {
-        "name": "storagePrice",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "minimumRate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ProviderApproved",
     "inputs": [
       {
@@ -1356,35 +1255,10 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "event",
-    "name": "RailRateUpdated",
-    "inputs": [
-      {
-        "name": "dataSetId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "railId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newRate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ServiceTerminated",
     "inputs": [
       {
-        "name": "caller",
+        "name": "approver",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1480,33 +1354,6 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "error",
-    "name": "AtLeastOnePriceMustBeNonZero",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CDNPaymentAlreadyTerminated",
-    "inputs": [
-      {
-        "name": "dataSetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CacheMissPaymentAlreadyTerminated",
-    "inputs": [
-      {
-        "name": "dataSetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CallerNotPayer",
     "inputs": [
       {
@@ -1570,6 +1417,27 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "error",
+    "name": "CallerNotServiceProvider",
+    "inputs": [
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expectedServiceProvider",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ChallengeWindowTooEarly",
     "inputs": [
       {
@@ -1602,20 +1470,20 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "error",
-    "name": "CommissionExceedsMaximum",
+    "name": "DataSetNotAbandoned",
     "inputs": [
       {
-        "name": "commissionType",
-        "type": "uint8",
-        "internalType": "enum Errors.CommissionType"
-      },
-      {
-        "name": "max",
+        "name": "dataSetId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "actual",
+        "name": "requiredEpoch",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentBlock",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1674,11 +1542,6 @@ export const FilecoinWarmStorageServiceAbi = [
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "DivisionByZero",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1744,115 +1607,6 @@ export const FilecoinWarmStorageServiceAbi = [
     "inputs": [
       {
         "name": "dataSetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientLockupAllowance",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lockupAllowance",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lockupUsage",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minimumLockupRequired",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientLockupFunds",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "minimumRequired",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientMaxLockupPeriod",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "maxLockupPeriod",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requiredLockupPeriod",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientRateAllowance",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "rateAllowance",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "rateUsage",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minimumRateRequired",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1970,17 +1724,6 @@ export const FilecoinWarmStorageServiceAbi = [
     "inputs": [
       {
         "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidTopUpAmount",
-    "inputs": [
-      {
-        "name": "dataSetId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2136,22 +1879,6 @@ export const FilecoinWarmStorageServiceAbi = [
   },
   {
     "type": "error",
-    "name": "OperatorNotApproved",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "OwnableInvalidOwner",
     "inputs": [
       {
@@ -2183,27 +1910,6 @@ export const FilecoinWarmStorageServiceAbi = [
       },
       {
         "name": "pdpEndEpoch",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PriceExceedsMaximum",
-    "inputs": [
-      {
-        "name": "priceType",
-        "type": "uint8",
-        "internalType": "enum Errors.PriceType"
-      },
-      {
-        "name": "maxAllowed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "actual",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2385,5 +2091,148 @@ export const FilecoinWarmStorageServiceAbi = [
         "internalType": "enum Errors.AddressField"
       }
     ]
+  },
+  {
+    "type": "event",
+    "name": "CDNPaymentRailsToppedUp",
+    "inputs": [
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cdnAmountAdded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalCdnLockup",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cacheMissAmountAdded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalCacheMissLockup",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CDNServiceTerminated",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cacheMissRailId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cdnRailId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DataSetAbandoned",
+    "inputs": [
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "pdpRailId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cacheMissRailId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cdnRailId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RailRateUpdated",
+    "inputs": [
+      {
+        "name": "dataSetId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "railId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newRate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PricingUpdated",
+    "inputs": [
+      {
+        "name": "storagePrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "minimumRate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   }
 ] as const

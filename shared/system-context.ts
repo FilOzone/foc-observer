@@ -147,7 +147,7 @@ Dataset state machine:
 - **Terminated/Lockup** (pdpEndEpoch > 0, pdpEndEpoch > current epoch): Service is ending but lockup period is running. SP MUST continue proving (gets paid for proven periods, zero for faults). No new pieces can be added. Piece removals still allowed.
 - **Post-Lockup** (pdpEndEpoch > 0, pdpEndEpoch <= current epoch): Lockup expired. No more proving. Settlement completes to endEpoch.
 - **Finalized**: All rails settled and zeroed (getRail reverts). Dataset still exists in PDPVerifier.
-- **Deleted**: SP called PDPVerifier.deleteDataSet(). All state cleared. Permanent.
+- **Deleted**: PDPVerifier.deleteDataSet() called. All state cleared. Permanent. Two paths in: (a) SP calls it after the FWSS lockup elapses (normal); (b) any caller invokes it after PDP_INACTIVITY_WINDOW passes with no terminateService - the "abandonment" path. Distinguish by event: \`fwss_service_terminated\` precedes (a); \`fwss_data_set_abandoned\` fires on (b). v1.3.0+ on calibnet, not yet on mainnet.
 
 **CRITICAL: pdpEndEpoch is the epoch when payment obligation ENDS, not when termination was requested.** For a fully-funded payer: pdpEndEpoch = termination_block + lockup_period (86400 epochs = 30 days). For an underfunded payer: pdpEndEpoch = last_funded_epoch + lockup_period (could be closer to or even before the current epoch).
 
@@ -170,8 +170,8 @@ Dataset state machine:
 
 ## Querying Active vs Terminated Datasets
 
-**Active FWSS datasets (never terminated)**:
-SELECT d.* FROM fwss_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM fwss_service_terminated t WHERE t.data_set_id = d.data_set_id)
+**Active FWSS datasets (never terminated or abandoned)**:
+SELECT d.* FROM fwss_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM fwss_service_terminated t WHERE t.data_set_id = d.data_set_id) AND NOT EXISTS (SELECT 1 FROM fwss_data_set_abandoned a WHERE a.data_set_id = d.data_set_id)
 
 **Active Storacha datasets**: Same pattern with storacha_fwss_* tables.
 
@@ -267,9 +267,9 @@ The fp_* tables provide full payment flow visibility:
 
 Two uses of one-time payment rails:
 1. **CDN/cache-miss payments**: Per-data set rails for bandwidth usage. JOIN with fwss_data_set_created via cdn_rail_id or cache_miss_rail_id.
-2. **Sybil fee rails** (v1.2.0+): Each data set creation creates an extra rail paying ~0.1 USDFC (0.0995 net after 0.5% fee) to the FilecoinPay contract address as a one-time sybil prevention fee. These rails have payee=FilecoinPay contract, rate=0, and are immediately finalized.
+2. **Sybil fee rails** (v1.2.0..v1.2.1): Each data set creation creates an extra rail paying ~0.1 USDFC (0.0995 net after 0.5% fee) to the FilecoinPay contract address, immediately finalized. Removed in v1.3.0 (createDataSet fee paid directly to SP instead).
 
-To identify one-time payment rails: paymentRate=0 in fp_rail_created, non-zero fp_one_time_payment amounts. To distinguish sybil fee rails specifically: payee is the FilecoinPay contract address.
+To identify one-time payment rails: paymentRate=0 in fp_rail_created, non-zero fp_one_time_payment amounts. Sybil fee rails: payee = FilecoinPay contract.
 
 **Operator approvals**: fp_operator_approval tracks which wallets have approved which operators (typically FWSS) with an approved boolean.
 
@@ -351,7 +351,7 @@ USDFC accumulates in FilecoinPay's fee auction pool from two sources, then claim
 
 **Source 1 - Settlement network fee:** During settleRail on USDFC-denominated rails, a 0.5% network fee is taken. This fee is credited to the FilecoinPay contract's own internal account (the auction pool). Visible in fp_rail_settled.network_fee (USDFC, 18 decimals). Produces small amounts per settlement (~0.00007 USDFC per minimum-rate rail).
 
-**Source 2 - FWSS sybil fee on data set creation (v1.2.0+, mainnet from 2026-03-23):** This is FWSS-specific. For data sets created via the FWSS pipeline, a 0.1 USDFC sybil fee (PDPVerifier.USDFC_SYBIL_FEE, 10^17 attoUSDFC on mainnet) is charged from the client's FilecoinPay balance. FWSS creates a temporary "burn rail" (client -> FilecoinPay contract address), deposits the fee via lockupFixed, then immediately terminates + settles + finalizes the rail in the same transaction. The rail pays FilecoinPay's 0.5% one-time network fee en route, but that fee also accrues in the same FilecoinPay auction pool, so the full 0.1 USDFC effectively lands in the burn queue. The burn rail is finalized and invisible after creation (getRail reverts). This is the dominant source of auction pool growth: each FWSS data set creation adds 0.1 USDFC, dwarfing the trickle from settlement network fees. Before 2026-03-23 on mainnet, the path was PDPVerifier's native 0.1 FIL burn paid by the SP's wallet in msg.value; that path is still available in PDPVerifier for callers that don't use a whitelisted service. Storacha and other service contracts set their own sybil-fee policy (or none); do not assume this path applies network-wide.
+**Source 2 - FWSS sybil fee on data set creation (v1.2.0..v1.2.1, mainnet from 2026-03-23 until v1.3.0 upgrade):** FWSS-specific. For data sets created via FWSS, a 0.1 USDFC sybil fee is charged from the client's FilecoinPay balance. FWSS creates a temporary burn rail (client -> FilecoinPay contract address), deposits the fee via lockupFixed, then terminates + settles + finalizes in the same tx. The 0.5% network fee en route also lands in the same auction pool, so the full 0.1 USDFC accrues. Dominant source of auction-pool growth in v1.2.x; removed in v1.3.0 (createDataSet fee now paid directly to SP, not burned). Before 2026-03-23 on mainnet, the path was PDPVerifier's 0.1 FIL burn from msg.value. Storacha and other services set their own policy.
 
 Observable: \`fp_rail_created WHERE payee = <FilecoinPay contract address>\` identifies sybil-fee rails. \`fp_one_time_payment\` rows with those rail_ids confirm the payment; \`rail_id\` is the link between the two tables.
 
@@ -447,11 +447,24 @@ The current FOC contracts (same proxy addresses) were deployed across two releas
 - Added: USDFC sybil fee on data set creation (0.1 USDFC per data set, replaces 0.1 FIL proof fee). Fee flows through a temporary burn rail into the FilecoinPay auction pool. PDPVerifier whitelisted to skip the old 0.1 FIL fee. PDPVerifier getActivePiecesByCursor for paginated piece queries.
 - Impact on fee auction: pool now grows by 0.1 USDFC per data set creation (dominant source), not just settlement trickle.
 
+**v1.2.1 - Patch (mainnet 2026-05-28)**: drops PDPVerifier sybil-fee dependency; burn rail unchanged.
+
+**v1.3.0 - Upgrade (calibnet 2026-06-09; mainnet still on v1.2.1)**
+- UUPS proxy upgrade of FWSS + PDPVerifier (v3.4.0). Same proxy addresses.
+- Pricing locked per-dataset at create-time. \`PricingUpdated\` removed; \`fwss_pricing_updated\` is legacy v1.2.x. Live rates via eth_call \`getCurrentPricingRates()\` (2nd return: minimumRate -> datasetFee) or \`getPriceList()\`.
+- Sybil burn rail gone; createDataSet fee is 0.025 USDFC paid directly to the SP. Auction pool stops growing from this source post-upgrade.
+- New \`DataSetAbandoned\` -> \`fwss_data_set_abandoned\`: third party calls PDPVerifier.deleteDataSet after PDP_INACTIVITY_WINDOW with no terminateService. Lifecycle endpoint distinct from \`fwss_service_terminated\`.
+- \`fwss_service_terminated.approver\` is the EIP-712 authorizer (payer / session key / SP), not necessarily tx.from. Pre-v1.3.0 the column was \`caller\` (= tx.from).
+- \`RailRateUpdated\`, \`CDNPaymentRailsToppedUp\`, \`CDNServiceTerminated\` move to a Rails library; same topic hash, FWSS proxy still emitter.
+- Source: [filecoin-services v1.3.0](https://github.com/FilOzone/filecoin-services/releases/tag/v1.3.0)
+
+**Storacha FWSS**: stays on v1.2.x. \`storacha_fwss_*\` keeps v1.2.x semantics (caller = tx.from, no abandoned rows, pricing_updated still current).
+
 To query upgrade history: SELECT contract, version, implementation, TO_TIMESTAMP(timestamp) as upgraded_at FROM contract_upgraded ORDER BY block_number. This shared table covers PDPVerifier, FWSS, and SPRegistry upgrades.
 
 **Orphan rails from defunct service contracts**: FilecoinPay is shared; rails created by pre-v1.0.0 FWSS or other abandoned operators persist in fp_* with no matching fwss_data_set_created. Filter \`fp_rail_created.operator\` to scope aggregates. Known abandoned operator: calibnet 0xd3de778c05f89e1240ef70100fb0d9e5b2efd258 (rails 1-23, pre-v1.0.0 FWSS, never settle).
 
-When interpreting data: events before ~epoch 3,414,500 (calibnet) / ~5,476,400 (mainnet) were under v1.0.0 semantics. Events after are under v1.1.0. v1.2.0 added the sybil fee mechanism - data sets created after v1.2.0 deposit 0.1 USDFC into the auction pool.
+Interpretation: pre-~epoch 3,414,500 (calibnet) / 5,476,400 (mainnet) is v1.0.0; v1.1.0 ran after; v1.2.0 added the sybil-fee burn rail; v1.3.0 (calibnet only) replaces it with a direct-to-SP 0.025 USDFC fee, per-dataset pricing, and the abandonment lifecycle.
 
 ## Tool Data Provenance
 

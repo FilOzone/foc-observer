@@ -170,18 +170,28 @@ export const TABLES: Record<string, TableDef> = {
     indexes: ["dataSetId", "railId", "timestamp"],
   },
   fwss_service_terminated: {
-    description: "Full service termination",
+    description: "Service termination via terminateService. approver is the EIP-712 authorizer (payer, payer's session key, or SP); not necessarily tx.from. Mutual termination (payer signs, SP submits) is indistinguishable from payer-initiated here.",
     columns: {
-      caller: { type: "hex" },
+      approver: { type: "hex", note: "EIP-712 authorizer (payer / session key / SP); pre-v1.3.0 was always tx sender" },
       dataSetId: { type: "bigint" },
       pdpRailId: { type: "bigint" },
       cacheMissRailId: { type: "bigint" },
       cdnRailId: { type: "bigint" },
     },
-    indexes: ["dataSetId", "pdpRailId", "caller", "timestamp"],
+    indexes: ["dataSetId", "pdpRailId", "approver", "timestamp"],
+  },
+  fwss_data_set_abandoned: {
+    description: "Dataset reaped via abandonment path: third party called PDPVerifier.deleteDataSet after PDP_INACTIVITY_WINDOW elapsed with no terminateService. Lifecycle endpoint distinct from ServiceTerminated. v1.3.0+.",
+    columns: {
+      dataSetId: { type: "bigint" },
+      pdpRailId: { type: "bigint" },
+      cacheMissRailId: { type: "bigint" },
+      cdnRailId: { type: "bigint" },
+    },
+    indexes: ["dataSetId", "pdpRailId"],
   },
   fwss_pricing_updated: {
-    description: "Global storage pricing change",
+    description: "Legacy v1.2.x event: global storage pricing change. Removed in v1.3.0 (pricing is now per-dataset, locked at create-time). No new rows once a deployment upgrades past v1.2.x.",
     columns: {
       storagePrice: { type: "bigint", note: "USDFC/TiB/month, 18 dec" },
       minimumRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },
@@ -602,7 +612,7 @@ export const TABLES: Record<string, TableDef> = {
     indexes: ["dataSetId", "railId", "timestamp"],
   },
   storacha_fwss_service_terminated: {
-    description: "Storacha FWSS full service termination",
+    description: "Storacha FWSS full service termination. Storacha tracks v1.2.x (caller = tx sender), no v1.3.0 approver semantics.",
     columns: {
       caller: { type: "hex" },
       dataSetId: { type: "bigint" },
@@ -613,7 +623,7 @@ export const TABLES: Record<string, TableDef> = {
     indexes: ["dataSetId", "pdpRailId", "caller", "timestamp"],
   },
   storacha_fwss_pricing_updated: {
-    description: "Storacha FWSS global storage pricing change",
+    description: "Storacha FWSS global storage pricing change. Storacha tracks v1.2.x where PricingUpdated is still active.",
     columns: {
       storagePrice: { type: "bigint", note: "USDFC/TiB/month, 18 dec" },
       minimumRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },

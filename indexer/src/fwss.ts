@@ -13,6 +13,7 @@ import {
   fwssCdnPaymentTerminated,
   fwssCdnServiceTerminated,
   fwssCdnRailsToppedUp,
+  fwssDataSetAbandoned,
   contractUpgraded,
   upgradeAnnounced,
   ownershipTransferred,
@@ -95,12 +96,12 @@ ponder.on("FWSS:RailRateUpdated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:ServiceTerminated", async ({ event, context }) => {
-  const { caller, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
+  const { approver, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(fwssServiceTerminated)
     .values({
       id: eventId(event),
-      caller, dataSetId, pdpRailId, cacheMissRailId, cdnRailId,
+      approver, dataSetId, pdpRailId, cacheMissRailId, cdnRailId,
       ...eventMeta(event),
     })
 })
@@ -163,6 +164,13 @@ ponder.on("FWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
       cdnAmountAdded, totalCdnLockup, cacheMissAmountAdded, totalCacheMissLockup,
       ...eventMeta(event),
     })
+})
+
+ponder.on("FWSS:DataSetAbandoned", async ({ event, context }) => {
+  const { dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
+  await context.db
+    .insert(fwssDataSetAbandoned)
+    .values({ id: eventId(event), dataSetId, pdpRailId, cacheMissRailId, cdnRailId, ...eventMeta(event) })
 })
 
 ponder.on("FWSS:ContractUpgraded", async ({ event, context }) => {

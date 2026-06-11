@@ -1,0 +1,12 @@
+[
+  {
+    "_comment": "Removed from the FWSS source in v1.3.0 (pricing is now per-dataset, captured at create-time). Retained here so Ponder still subscribes to it - needed (a) to keep indexing mainnet v1.2.1 emissions until that network upgrades, and (b) to backfill historical pre-v1.3.0 PricingUpdated rows on any reindex-from-genesis (Ponder skips events not in the ABI). Only safe to remove once no indexed deployment will ever need its pre-v1.3.0 history reconstructed.",
+    "type": "event",
+    "name": "PricingUpdated",
+    "inputs": [
+      { "name": "storagePrice", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "minimumRate", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  }
+]
