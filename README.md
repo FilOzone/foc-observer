@@ -150,6 +150,8 @@ All configuration is via `.env`. Copy `.env.example` for a template.
 | `LOTUS_MAINNET_PORT` | No | Local Lotus port for socat proxy (default 2234) |
 | `BETTERSTACK_CH_USER` | No | BetterStack ClickHouse username (enables DealBot metrics) |
 | `BETTERSTACK_CH_PASSWORD` | No | BetterStack ClickHouse password |
+| `CALIBNET_DATA_SCHEMA` | No | Active Ponder data schema (default `data_v1`); bump on reindex |
+| `MAINNET_DATA_SCHEMA` | No | Active Ponder data schema (default `data_v1`); bump on reindex |
 
 **Using remote RPC (e.g. Glif):**
 
@@ -186,7 +188,16 @@ Host network (lotus-proxy only):
 
 Containers run as non-root (`USER node`). Only `lotus-proxy` has host networking, forwarding exactly two ports.
 
-## Development
+### Re-indexing (zero-downtime schema changes)
+
+Each Ponder indexer writes its tables to a named Postgres schema (`CALIBNET_DATA_SCHEMA` / `MAINNET_DATA_SCHEMA` in `.env`, default `data_v1`) and auto-creates views in `public`, which is all the server ever queries. Indexer schema or handler changes require a full re-index, done in parallel with zero query downtime:
+
+1. Define a temporary `ponder-<network>-reindex` service in a compose override file, running `--schema data_vN` (the next version, no `--views-schema`) against the same Postgres.
+2. Let it catch up. It shares Ponder's `ponder_sync` raw-chain cache, so code-only changes re-index from local data at high speed without re-fetching from RPC; only config changes (new contracts, earlier start blocks) need RPC.
+3. At cutover: stop the live indexer, drop and recreate the `public` schema, bump `<NETWORK>_DATA_SCHEMA` in `.env`, remove the reindex container, start the live indexer (it recreates the `public` views over the new schema), and restart `foc-observer`.
+4. Drop the old `data_v*` schema when satisfied.
+
+Do not restart the live indexer containers while a reindex is catching up: they volume-mount the indexer source, and restarting them under changed code makes Ponder rebuild their current schema in place.
 
 ### Client (`@filoz/foc-observer`)
 
@@ -214,9 +225,11 @@ To regenerate contract ABIs:
 
 ```bash
 cd indexer
-./scripts/generate-abis.sh          # Uses default ref (v1.2.0)
+./scripts/generate-abis.sh          # Uses the default ref pinned in the script
 ./scripts/generate-abis.sh main     # Or specify a ref
 ```
+
+The FilecoinWarmStorageService ABI is a union: the script folds in events declared in FWSS's internal libraries (emitted from the FWSS proxy but omitted from the published contract ABI by forge) plus legacy events retained for older deployments, so one ABI serves all deployed contract versions. See `indexer/abis/fwss-extra-events.json`.
 
 ## What is FOC?
 
