@@ -95,12 +95,14 @@ ponder.on("StorachaFWSS:RailRateUpdated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:ServiceTerminated", async ({ event, context }) => {
-  const { caller, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
+  // Storacha tracks v1.2.x: on-chain semantic is the tx sender. The shared ABI
+  // types the field as `approver` (v1.3.0 name) — wire format is identical.
+  const { approver, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(storachaFwssServiceTerminated)
     .values({
       id: eventId(event),
-      caller, dataSetId, pdpRailId, cacheMissRailId, cdnRailId,
+      caller: approver, dataSetId, pdpRailId, cacheMissRailId, cdnRailId,
       ...eventMeta(event),
     })
 })

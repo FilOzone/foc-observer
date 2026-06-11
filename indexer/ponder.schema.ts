@@ -84,6 +84,7 @@ export const fwssPdpPaymentTerminated = tables.fwss_pdp_payment_terminated
 export const fwssCdnPaymentTerminated = tables.fwss_cdn_payment_terminated
 export const fwssCdnServiceTerminated = tables.fwss_cdn_service_terminated
 export const fwssCdnRailsToppedUp = tables.fwss_cdn_rails_topped_up
+export const fwssDataSetAbandoned = tables.fwss_data_set_abandoned
 
 export const contractUpgraded = tables.contract_upgraded
 export const upgradeAnnounced = tables.upgrade_announced
