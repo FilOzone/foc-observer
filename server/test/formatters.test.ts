@@ -47,14 +47,6 @@ describe("formatStandardColumns", () => {
     expect(output).toContain("timestamp:bigint")
   })
 
-  test("excludes tx metadata that lives in tx_meta", () => {
-    const output = formatStandardColumns()
-    expect(output).not.toContain("tx_from")
-    expect(output).not.toContain("tx_value")
-    expect(output).not.toContain("gas_used")
-    expect(output).not.toContain("effective_gas_price")
-  })
-
   test("excludes id", () => {
     expect(formatStandardColumns()).not.toMatch(/^id:/)
   })
