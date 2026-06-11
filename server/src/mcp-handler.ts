@@ -113,14 +113,14 @@ Call this exactly once at the start of your work. Do not skip it.`,
   server.registerTool("query_sql", {
     description: `Execute read-only SQL against FOC event data indexed from Filecoin contracts by Ponder.
 
-All tables have: tx_hash, tx_from, tx_value, gas_used, effective_gas_price, block_number, timestamp.
+All event tables have: tx_hash, block_number, timestamp. For tx_from, tx_value, gas_used, effective_gas_price: JOIN public.tx_meta USING (tx_hash). One row per tx in tx_meta, joined from ponder_sync.transactions + transaction_receipts + blocks.
 Max 10,000 rows per query. System catalogs are blocked.
 
 Tables and key columns:
 ${formatTableList()}
 
 Key joins: fwss tables use data_set_id, pdp tables use set_id, these are the same value (JOIN fwss.data_set_id = pdp.set_id). rail_id across fp tables. Link rails to datasets: JOIN fwss_data_set_created.pdp_rail_id = fp_rail_settled.rail_id. Provider names: call get_providers first, then JOIN by provider_id.
-Amounts are bigint (18 decimals). Gas cost in FIL = gas_used * effective_gas_price / 1e18.`,
+Amounts are bigint (18 decimals). Gas cost in FIL = m.gas_used * m.effective_gas_price / 1e18 (m being tx_meta).`,
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, sql: z.string().describe("SQL SELECT query to execute") },
   }, logged("query_sql", async ({ network, sql }) => {
     const sqlStart = Date.now()

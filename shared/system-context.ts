@@ -308,7 +308,7 @@ The stack has four payer classes. Every on-chain operation falls into one, and a
 **Client-paid as FIL gas (client's wallet submits):**
 - FilecoinPay.deposit / withdrawal / setOperatorApproval (shared FilecoinPay)
 - SessionKeyRegistry.authorizationsUpdated (shared SessionKeyRegistry)
-- FWSS.terminateService, callable by EITHER payer or serviceProvider (FilecoinWarmStorageService.sol:1093). Check tx_from to attribute. Storacha's termination entry points are on its own service contract.
+- FWSS.terminateService, callable by EITHER payer or serviceProvider (FilecoinWarmStorageService.sol:1093). JOIN tx_meta to attribute by sender. Storacha's termination entry points are on its own service contract.
 
 **External / auction participants (FIL gas + FIL burn):**
 - burnForFees on FilecoinPay. Caller pays tx gas AND sends FIL with the tx that gets burned. Not a client, not an SP, but a separate participant class.
@@ -316,9 +316,9 @@ The stack has four payer classes. Every on-chain operation falls into one, and a
 **Admin / operator (FilOz multisig, FIL gas):**
 - FWSS.updatePricing, proxy upgrades, provider approval/endorsement, FilBeam controller ops (terminateCDNService, CDN rail settlements).
 
-**Classifying tx_from**: The authoritative "is this address an SP?" oracle is \`SELECT DISTINCT tx_from FROM pdp_possession_proven\`, since only an SP ever submits a proof. Addresses not in that set are non-SP.
+**Classifying senders**: The authoritative "is this address an SP?" oracle is \`SELECT DISTINCT m.tx_from FROM pdp_possession_proven p JOIN tx_meta m USING (tx_hash)\`, since only an SP ever submits a proof. Addresses not in that set are non-SP.
 
-Important caveat: PDPVerifier itself is permissionless. Anyone can call createDataSet / addPieces / provePossession on it directly; FWSS is an opinionated, permissioned service layer on top, but it is not a gate. ServiceProviderRegistry is a discovery and capability registry, not an access-control list for PDPVerifier. So "tx_from on createDataSet is always a registered SP" is a usage pattern, not a protocol guarantee. Experimental callers, parallel services (e.g. Storacha's FWSS fork), or a registered SP that has not yet produced its first proof will all show up as non-SP under the proof-oracle classifier. Treat the classifier as a strong signal about the FWSS-mediated pipeline, not as a trustable authorization check.
+Important caveat: PDPVerifier itself is permissionless. Anyone can call createDataSet / addPieces / provePossession on it directly; FWSS is an opinionated, permissioned service layer on top, but it is not a gate. ServiceProviderRegistry is a discovery and capability registry, not an access-control list for PDPVerifier. So "sender of createDataSet is always a registered SP" is a usage pattern, not a protocol guarantee. Experimental callers, parallel services (e.g. Storacha's FWSS fork), or a registered SP that has not yet produced its first proof will all show up as non-SP under the proof-oracle classifier. Treat the classifier as a strong signal about the FWSS-mediated pipeline, not as a trustable authorization check.
 
 **Observed distribution (mainnet, all services combined, v1.2.0 through 2026-04-21)**:
 Shared tables like pdp_*, fp_*, spr_* include txs from every service contract that uses them (FWSS, Storacha's fork, direct callers). The numbers below are the network-wide totals, not FWSS-only; FWSS is the dominant user but not the sole one.
@@ -343,7 +343,7 @@ Shared tables like pdp_*, fp_*, spr_* include txs from every service contract th
 | spr_productAdded / providerRegistered | 79M | 27 each |
 | skr_authorizationsUpdated | 12M | 8 |
 
-Cost in FIL = gas × effective_gas_price. Both are in every event row, so \`SUM(gas_used × effective_gas_price) / 1e18\` is always the right aggregation for FIL burn.
+Cost in FIL = gas × effective_gas_price. Both live in tx_meta (one row per tx), not on event rows. For aggregations join through tx_meta to avoid double-counting when one tx fires multiple events: \`SELECT SUM(m.gas_used*m.effective_gas_price)/1e18 FROM tx_meta m WHERE m.tx_to = '<contract>' AND m.tx_selector = '0x...'\`.
 
 ## FIL Burn Mechanisms
 
@@ -470,7 +470,7 @@ Interpretation: pre-~epoch 3,414,500 (calibnet) / 5,476,400 (mainnet) is v1.0.0;
 
 When explaining results to users, cite the source and any caveat:
 
-**Indexed events** (query_sql, list_tables, describe_table, get_status): Ponder writes one row per emitted event to Postgres, with receipt fields (gas_used, effective_gas_price, tx_from, tx_value) attached. Coverage: calibnet from epoch 3,155,000; mainnet from epoch 5,215,000. Limitation: only captures emitted events. Silent SPs produce no fault events. \`fp_burn_for_fees\` is indexed from tx input (no event).
+**Indexed events** (query_sql, list_tables, describe_table, get_status): Ponder writes one row per emitted event to Postgres with the join key tx_hash plus block context. Tx-level receipt fields (tx_from, tx_value, gas_used, effective_gas_price) live in the tx_meta view (one row per tx); join via tx_hash. Coverage: calibnet from epoch 3,155,000; mainnet from epoch 5,215,000. Limitation: only captures emitted events. Silent SPs produce no fault events. \`fp_burn_for_fees\` is indexed from tx input (no event).
 
 **Live state** (get_providers, get_provider, get_dataset, get_dataset_proving, get_rail, get_pricing, get_account, get_auction): direct eth_call via Lotus RPC. Always current block, no history. A finalized rail (settled + zeroed) reverts on getRail() by design.
 
@@ -642,9 +642,9 @@ The permissions field is a JSON array of bytes32 hashes representing the scopes 
 2. **Standalone addPieces**: pdp_pieces_added + fwss_piece_added (one per piece) + fwss_rail_rate_updated in one tx. No pdp_data_set_created in the same tx.
 3. **Combined create+add** (default Synapse SDK path): pdp_data_set_created + fwss_data_set_created + fp_rail_created + pdp_pieces_added + fwss_piece_added + fwss_rail_rate_updated ALL in one tx. This is what happens when addPieces is called with dataSetId=0, PDPVerifier creates the data set first, then adds pieces, triggering both FWSS callbacks in sequence.
 
-To identify the operation type: JOIN pdp_data_set_created and pdp_pieces_added ON tx_hash. If both exist in the same tx, it's a combined create+add. The gas cost of the transaction (gas_used * effective_gas_price) covers the entire operation.
+To identify the operation type: JOIN pdp_data_set_created and pdp_pieces_added ON tx_hash. If both exist in the same tx, it's a combined create+add. Per-tx gas cost: \`SELECT m.gas_used*m.effective_gas_price/1e18 FROM tx_meta m WHERE m.tx_hash = '<hash>'\`.
 
-For gas analysis: use gas_used and effective_gas_price from any event in the transaction (all events in a tx share the same receipt). Piece count (pdp_pieces_added.piece_count) strongly affects gas, batch addPieces with 100 pieces costs much more than 1 piece. Group by piece_count ranges for meaningful averages.
+For gas analysis: JOIN your event table to tx_meta USING (tx_hash). Piece count (pdp_pieces_added.piece_count) strongly affects gas; batch addPieces with 100 pieces costs much more than 1 piece. Group by piece_count ranges for meaningful averages.
 
 **Total data stored**: SUM(raw_size) from fwss_piece_added gives total bytes of original (unpadded) data. Divide by 1e12 for TiB. Filter by provider via JOIN with fwss_data_set_created. Exclude terminated datasets by LEFT JOIN with fwss_service_terminated and filtering WHERE terminated IS NULL.
 
@@ -662,21 +662,21 @@ For gas analysis: use gas_used and effective_gas_price from any event in the tra
 
 **Empty-dataset settlement gap (FWSS)**: An FWSS data set with zero pieces produces no proofs, so no pdp_possession_proven, no pdp_next_proving_period, and therefore no FWSS settlement-validation callback. FWSS's PDP rail is validator-mediated; payment only advances when proof verification triggers settlement. An empty data set's rail accrues the floor rate in lockup accounting but never emits fp_rail_settled, so the SP is never paid despite the rail being active. This is the system behaving as designed, not a bug: the payment primitive is waiting on proofs that never come. Observable signature: a PDP rail from fp_rail_created with no matching rows in fp_rail_settled after many proving periods, and the owning data set has no rows in pdp_pieces_added or fwss_piece_added. Ask get_rail for the current lockup position and get_dataset for piece state to confirm.
 
-**Gas cost per operation class**: Use the \`tx_meta\` view, not the event tables. Event tables carry a copy of the transaction's gas fields on every event row, so summing them over an event table double-counts every tx that fires more than one event (every addPieces fires \`fp_rail_rate_modified\` as a side-effect; aggregating over \`fp_rail_rate_modified\` and \`pdp_pieces_added\` separately attributes the same gas twice).
+**Gas cost per operation class**: Aggregate directly over \`tx_meta\`, which is one row per transaction. Aggregating gas over an event table would double-count any tx that fires more than one event (every addPieces fires \`fp_rail_rate_modified\` as a side-effect; summing across \`fp_rail_rate_modified\` and \`pdp_pieces_added\` attributes the same gas twice).
 
-\`tx_meta\` is one row per transaction with \`tx_to\` (target contract), \`tx_selector\` (first 4 bytes of input = function selector), \`gas_used\`, \`effective_gas_price\`, plus the standard tx_from/value/block_number/status. Group by \`tx_to + tx_selector\` to get the true per-function gas distribution:
+\`tx_meta\` columns: \`tx_hash\`, \`tx_to\` (target contract), \`tx_selector\` (first 4 bytes of input = function selector), \`tx_from\`, \`tx_value\`, \`gas_used\`, \`effective_gas_price\`, \`block_number\`, \`timestamp\`, \`status\`. Group by \`tx_to + tx_selector\` for the per-function gas distribution:
 
 \`SELECT tx_to, tx_selector, COUNT(*) AS txs, ROUND(AVG(gas_used)/1e6, 0) AS avg_gas_M, ROUND(SUM(gas_used*effective_gas_price)/1e18, 4) AS fil_burned FROM tx_meta WHERE tx_to IS NOT NULL GROUP BY 1,2 ORDER BY fil_burned DESC\`
 
 **Who pays for what** is fixed by the operation, not the wallet. Most on-chain operations are SP-paid by design: SPs submit them via Curio in the course of doing their job. The small set of client-paid operations is enumerated below. See the Cost Attribution section above for the full taxonomy and observed totals.
 
 - **SP-paid (SP's wallet submits the tx, pays FIL gas):** all PDPVerifier ops (createDataSet, addPieces, piecesRemoved, provePossession, nextProvingPeriod), ServiceProviderRegistry registration and product updates. In practice SPs also submit most rail-class FilecoinPay ops since they're the payee claiming funds, but these are not gated to SPs.
-- **Either-party (FilecoinPay rail ops, FWSS.terminateService):** settleRail, terminateRail, finalizeRail, oneTimePayment processing, and FWSS.terminateService can all be initiated by either the payer (client) or payee (SP). Whoever submits pays gas. Observed mainnet pattern: settleRail and finalizeRail are ~99% SP-submitted (payees claiming), terminateService is mixed (~80% client-initiated). Determine by tx_from per row.
+- **Either-party (FilecoinPay rail ops, FWSS.terminateService):** settleRail, terminateRail, finalizeRail, oneTimePayment processing, and FWSS.terminateService can all be initiated by either the payer (client) or payee (SP). Whoever submits pays gas. Observed mainnet pattern: settleRail and finalizeRail are ~99% SP-submitted (payees claiming), terminateService is mixed (~80% client-initiated). Determine by joining tx_meta and inspecting tx_from.
 - **Client-paid (client's wallet submits, pays FIL gas):** FilecoinPay account setup and money movement (deposit, depositWithPermit, withdraw, setOperatorApproval), SessionKeyRegistry authorization updates.
 - **Auction participant:** burnForFees on FilecoinPay (separate participant class; they pay tx gas plus the FIL they burn to claim the USDFC pool).
 - **FilOz operator/admin:** FWSS pricing/config changes, proxy upgrades, FilBeam controller ops, provider approval/endorsement.
 
-For the either-party ops, attribute by checking tx_from against the SP set: \`WHERE tx_from IN (SELECT DISTINCT tx_from FROM pdp_possession_proven)\`. Addresses that have submitted a proof are SPs.
+For the either-party ops, attribute by joining tx_meta and checking against the SP set: \`JOIN tx_meta m USING (tx_hash) WHERE m.tx_from IN (SELECT DISTINCT pm.tx_from FROM pdp_possession_proven p JOIN tx_meta pm USING (tx_hash))\`. Addresses that have submitted a proof are SPs.
 
 **Known target addresses and selectors** (mainnet; calibnet uses different proxy addresses for the same contracts, so use get_pricing or the deployments file to map):
 - PDPVerifier \`0xBADd0B92C1c71d02E7d520f64c0876538fa2557F\`: \`0x9afd37f2\` addPieces, \`0xf58f952b\` provePossession, \`0x45c0b92d\` nextProvingPeriod, \`0xbbae41cb\` createDataSet
@@ -714,23 +714,19 @@ Mainnet: \`https://filecoin.blockscout.com/tx/{txHash}\`. Calibnet: \`https://fi
 
 ## Transaction and Event Metadata
 
-All event tables include these standard columns alongside event-specific fields:
+Every event row carries only join keys and block context:
 - id: {blockHash}-{logIndex} (unique event identifier)
-- tx_hash: transaction hash (use for block explorer links)
-- tx_from: transaction sender address (the wallet that submitted the transaction)
-- tx_value: FIL value sent with the transaction (bigint, 18 decimals. Usually 0 for contract calls, non-zero for payable functions like createDataSet which charges a proof fee)
-- gas_used: actual gas consumed by the transaction (from receipt)
-- effective_gas_price: price per gas unit in attoFIL (from receipt)
+- tx_hash: transaction hash. JOIN key for tx_meta.
 - block_number: Filecoin epoch
 - timestamp: unix seconds
 
-Gas cost in FIL = gas_used * effective_gas_price / 1e18. To analyze gas costs:
-- Per-operation: SELECT gas_used * effective_gas_price / 1e18 as gas_cost_fil FROM table
-- Per-provider proving cost: SUM(gas_used * effective_gas_price) from pdp_next_proving_period JOIN fwss_data_set_created
-- Network-wide daily gas: GROUP BY DATE_TRUNC('day', TO_TIMESTAMP(timestamp)) with SUM(gas_used * effective_gas_price)
-- Compare proving vs settlement vs data set creation gas costs to understand where gas budget goes
+Tx-level fields (tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector) live in the \`tx_meta\` view (one row per tx, sourced from ponder_sync). NOT duplicated on event rows. Every gas/sender/value query joins through tx_meta:
+
+\`JOIN tx_meta m USING (tx_hash) ... SUM(m.gas_used*m.effective_gas_price)/1e18 AS fil\` for any aggregation; \`WHERE m.tx_from = '0x...'\` to filter by sender.
+
+Block ranges and time use the event row directly (no JOIN): \`WHERE block_number BETWEEN x AND y\` or \`TO_TIMESTAMP(timestamp)\`.
 
 To link to a block explorer: use tx_hash with the explorer URL templates (see Block Explorers section).
-For the fp_burn_for_fees table, the id format is {blockHash}-{transactionIndex} (indexed from transactions, not events).
+fp_burn_for_fees: id is {blockHash}-{transactionIndex} (indexed from tx, not events). Row holds token, recipient, requested_amount (USDFC claimed); for FIL burned and caller, JOIN tx_meta - tx_value is the FIL burned, tx_from is the caller.
 
 `
