@@ -102,9 +102,20 @@ export class PonderClient {
    *   and ponder_sync.transaction_receipts. Allow-listed in sql-validator.ts.
    */
   async bootstrapViews(): Promise<void> {
+    // Hash index is the only entry point into tx_meta by tx_hash; ponder_sync
+    // tables are keyed (chain_id, block_number, transaction_index) and a JOIN
+    // by hash seq-scans millions of rows without it. USING hash: equality-only
+    // and far smaller than a btree over 66-char hex strings. ~10s to build on
+    // 15M rows, no-op after the first run.
+    const indexDdl = `
+      CREATE INDEX IF NOT EXISTS transactions_hash_hash_idx
+        ON ponder_sync.transactions USING hash (hash)
+    `
     // CREATE OR REPLACE VIEW only permits appending columns, not reordering or
     // renaming. New columns must go at the end of the SELECT list.
-    const ddl = `
+    // Receipts and blocks join via the ponder_sync primary keys; only the
+    // transactions lookup needs the hash index above.
+    const viewDdl = `
       CREATE OR REPLACE VIEW public.tx_meta AS
       SELECT
         t.hash                AS tx_hash,
@@ -119,12 +130,15 @@ export class PonderClient {
         b.timestamp           AS timestamp
       FROM ponder_sync.transactions t
       JOIN ponder_sync.transaction_receipts r
-        ON r.transaction_hash = t.hash AND r.chain_id = t.chain_id
+        ON r.chain_id = t.chain_id
+        AND r.block_number = t.block_number
+        AND r.transaction_index = t.transaction_index
       JOIN ponder_sync.blocks b
-        ON b.number = t.block_number AND b.chain_id = t.chain_id
+        ON b.chain_id = t.chain_id AND b.number = t.block_number
     `
     try {
-      await this.queryRaw(ddl)
+      await this.queryRaw(indexDdl)
+      await this.queryRaw(viewDdl)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       // Not fatal — Ponder may not have created its sync tables yet on a fresh

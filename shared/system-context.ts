@@ -730,7 +730,7 @@ Every event row carries only join keys and block context:
 
 Tx-level fields (tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector) live in the \`tx_meta\` view (one row per tx, sourced from ponder_sync). NOT duplicated on event rows. Every gas/sender/value query joins through tx_meta:
 
-\`JOIN tx_meta m USING (tx_hash) ... SUM(m.gas_used*m.effective_gas_price)/1e18 AS fil\` for any aggregation; \`WHERE m.tx_from = '0x...'\` to filter by sender.
+\`JOIN tx_meta m USING (tx_hash) ... SUM(m.gas_used*m.effective_gas_price)/1e18 AS fil\` for any aggregation; \`WHERE m.tx_from = '0x...'\` to filter by sender. When the query already joins two event tables (both have tx_hash), USING is ambiguous - use explicit \`JOIN tx_meta m ON m.tx_hash = <alias>.tx_hash\`.
 
 Block ranges and time use the event row directly (no JOIN): \`WHERE block_number BETWEEN x AND y\` or \`TO_TIMESTAMP(timestamp)\`.
 
