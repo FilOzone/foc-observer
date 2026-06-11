@@ -28,6 +28,12 @@ export interface ColumnInfo {
 
 import { TABLES } from "./schema-defs.js"
 
+// Server-created views (bootstrapViews below), not in schema-defs TABLES.
+const VIEW_DESCRIPTIONS: Record<string, string> = {
+  tx_meta:
+    "One row per transaction: tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector, status. Event tables carry only tx_hash; JOIN tx_meta USING (tx_hash) for sender/value/gas. Gas cost in FIL = gas_used * effective_gas_price / 1e18",
+}
+
 export class PonderClient {
   readonly network: NetworkConfig
   private pool: pg.Pool
@@ -209,7 +215,7 @@ export class PonderClient {
         // Table might not be queryable
       }
 
-      const desc = TABLES[name]?.description ?? (kind === "view" ? "(view)" : "")
+      const desc = TABLES[name]?.description ?? VIEW_DESCRIPTIONS[name] ?? (kind === "view" ? "(view)" : "")
       tables.push({ name, rowCount, description: desc })
     }
 
