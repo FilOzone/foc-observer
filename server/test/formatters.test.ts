@@ -43,8 +43,6 @@ describe("formatStandardColumns", () => {
   test("includes standard fields", () => {
     const output = formatStandardColumns()
     expect(output).toContain("tx_hash:hex")
-    expect(output).toContain("tx_from:hex")
-    expect(output).toContain("gas_used:bigint")
     expect(output).toContain("block_number:bigint")
     expect(output).toContain("timestamp:bigint")
   })

@@ -28,6 +28,12 @@ export interface ColumnInfo {
 
 import { TABLES } from "./schema-defs.js"
 
+// Server-created views (bootstrapViews below), not in schema-defs TABLES.
+const VIEW_DESCRIPTIONS: Record<string, string> = {
+  tx_meta:
+    "One row per transaction: tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector, status. Event tables carry only tx_hash; JOIN tx_meta USING (tx_hash) for sender/value/gas. Gas cost in FIL = gas_used * effective_gas_price / 1e18",
+}
+
 export class PonderClient {
   readonly network: NetworkConfig
   private pool: pg.Pool
@@ -96,9 +102,20 @@ export class PonderClient {
    *   and ponder_sync.transaction_receipts. Allow-listed in sql-validator.ts.
    */
   async bootstrapViews(): Promise<void> {
+    // Hash index is the only entry point into tx_meta by tx_hash; ponder_sync
+    // tables are keyed (chain_id, block_number, transaction_index) and a JOIN
+    // by hash seq-scans millions of rows without it. USING hash: equality-only
+    // and far smaller than a btree over 66-char hex strings. ~10s to build on
+    // 15M rows, no-op after the first run.
+    const indexDdl = `
+      CREATE INDEX IF NOT EXISTS transactions_hash_hash_idx
+        ON ponder_sync.transactions USING hash (hash)
+    `
     // CREATE OR REPLACE VIEW only permits appending columns, not reordering or
     // renaming. New columns must go at the end of the SELECT list.
-    const ddl = `
+    // Receipts and blocks join via the ponder_sync primary keys; only the
+    // transactions lookup needs the hash index above.
+    const viewDdl = `
       CREATE OR REPLACE VIEW public.tx_meta AS
       SELECT
         t.hash                AS tx_hash,
@@ -113,12 +130,15 @@ export class PonderClient {
         b.timestamp           AS timestamp
       FROM ponder_sync.transactions t
       JOIN ponder_sync.transaction_receipts r
-        ON r.transaction_hash = t.hash AND r.chain_id = t.chain_id
+        ON r.chain_id = t.chain_id
+        AND r.block_number = t.block_number
+        AND r.transaction_index = t.transaction_index
       JOIN ponder_sync.blocks b
-        ON b.number = t.block_number AND b.chain_id = t.chain_id
+        ON b.chain_id = t.chain_id AND b.number = t.block_number
     `
     try {
-      await this.queryRaw(ddl)
+      await this.queryRaw(indexDdl)
+      await this.queryRaw(viewDdl)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       // Not fatal — Ponder may not have created its sync tables yet on a fresh
@@ -209,7 +229,7 @@ export class PonderClient {
         // Table might not be queryable
       }
 
-      const desc = TABLES[name]?.description ?? (kind === "view" ? "(view)" : "")
+      const desc = TABLES[name]?.description ?? VIEW_DESCRIPTIONS[name] ?? (kind === "view" ? "(view)" : "")
       tables.push({ name, rowCount, description: desc })
     }
 

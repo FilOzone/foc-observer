@@ -10,18 +10,12 @@ export function txEventId(event: { block: { hash: string }; transaction: { trans
   return `${event.block.hash}-${event.transaction.transactionIndex}`
 }
 
-/** Standard metadata fields present on every indexed event row. */
 export function eventMeta(event: {
-  transaction: { hash: string; from: string; value: bigint }
-  transactionReceipt?: { gasUsed: bigint; effectiveGasPrice: bigint } | null
+  transaction: { hash: string }
   block: { number: bigint; timestamp: bigint }
 }) {
   return {
     txHash: event.transaction.hash,
-    txFrom: event.transaction.from,
-    txValue: event.transaction.value,
-    gasUsed: event.transactionReceipt!.gasUsed,
-    effectiveGasPrice: event.transactionReceipt!.effectiveGasPrice,
     blockNumber: event.block.number,
     timestamp: event.block.timestamp,
   }
