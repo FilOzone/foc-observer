@@ -204,32 +204,37 @@ export class PonderClient {
   }
 
   async listTables(): Promise<TableInfo[]> {
-    // Tables and views in the public schema. Views (like tx_meta) are surfaced
-    // alongside event tables so agents discover them via list_tables.
+    // rowCount is a planner estimate, not COUNT(*). public holds views over the
+    // data_v* schema; an exact count of tx_meta (a join over millions of
+    // transactions) is too slow for /status. Use pg_class.reltuples, resolved
+    // via pg_rewrite/pg_depend to the backing table(s) for views (MAX across a
+    // join, so tx_meta reports its tx count).
     const result = await this.queryRaw(`
-      SELECT tablename AS name, 'table' AS kind FROM pg_catalog.pg_tables WHERE schemaname = 'public'
-      UNION ALL
-      SELECT viewname  AS name, 'view'  AS kind FROM pg_catalog.pg_views  WHERE schemaname = 'public'
-      ORDER BY name
+      SELECT rel.relname AS name,
+        rel.relkind AS kind,
+        CASE WHEN rel.relkind = 'r' THEN GREATEST(rel.reltuples, 0)::bigint
+             ELSE COALESCE((
+               SELECT MAX(GREATEST(t.reltuples, 0))::bigint
+               FROM pg_rewrite rw
+               JOIN pg_depend d ON d.objid = rw.oid
+                 AND d.refclassid = 'pg_class'::regclass AND d.deptype = 'n'
+               JOIN pg_class t ON t.oid = d.refobjid AND t.relkind = 'r'
+               WHERE rw.ev_class = rel.oid
+             ), 0) END AS row_estimate
+      FROM pg_class rel
+      JOIN pg_namespace n ON n.oid = rel.relnamespace AND n.nspname = 'public'
+      WHERE rel.relkind IN ('r', 'v')
+      ORDER BY rel.relname
     `)
 
     const tables: TableInfo[] = []
     for (const row of result.rows as Record<string, unknown>[]) {
       const name = row.name as string
-      const kind = row.kind as string
       if (name.startsWith("_ponder") || name.startsWith("ponder_") || name.startsWith("_reorg__")) continue
 
-      let rowCount = 0
-      try {
-        const countResult = await this.queryRaw(
-          `SELECT COUNT(*) as count FROM "${name}"`
-        )
-        rowCount = Number((countResult.rows[0] as Record<string, unknown>)?.count ?? 0)
-      } catch {
-        // Table might not be queryable
-      }
-
-      const desc = TABLES[name]?.description ?? VIEW_DESCRIPTIONS[name] ?? (kind === "view" ? "(view)" : "")
+      const rowCount = Number((row as Record<string, unknown>).row_estimate ?? 0)
+      const isView = (row.kind as string) === "v"
+      const desc = TABLES[name]?.description ?? VIEW_DESCRIPTIONS[name] ?? (isView ? "(view)" : "")
       tables.push({ name, rowCount, description: desc })
     }
 
