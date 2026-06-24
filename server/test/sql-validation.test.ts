@@ -321,6 +321,29 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("SELECT * FROM fwss_data_set_created WHERE source = 'test;value'")).not.toThrow()
   })
 
+  // -- Trailing semicolon (allowed, stripped from returned sql) --
+
+  test("strips a trailing semicolon", () => {
+    expect(validateSql("SELECT 1;").sql).toBe("SELECT 1")
+  })
+
+  test("strips trailing semicolons with whitespace", () => {
+    expect(validateSql("SELECT 1 ;  ").sql).toBe("SELECT 1")
+    expect(validateSql("SELECT 1;;").sql).toBe("SELECT 1")
+  })
+
+  test("strips trailing semicolon without harming a string literal", () => {
+    expect(validateSql("SELECT 'a;b';").sql).toBe("SELECT 'a;b'")
+  })
+
+  test("still blocks multi-statement with a trailing semicolon", () => {
+    expect(() => validateSql("SELECT 1; SELECT 2;")).toThrow(/Multiple statements/)
+  })
+
+  test("blocks semicolons-only query as empty", () => {
+    expect(() => validateSql(" ; ; ")).toThrow(/Empty/)
+  })
+
   // -- Empty / malformed --
 
   test("blocks empty query", () => {

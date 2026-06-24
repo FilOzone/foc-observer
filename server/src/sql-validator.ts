@@ -42,11 +42,12 @@ const ALLOWED_TABLES = new Set([...Object.keys(TABLES), ...ALLOWED_VIEWS])
  * Throws descriptive errors for any disallowed construct.
  * Returns metadata about the query for execution routing.
  */
-export function validateSql(sql: string): { isExplain: boolean } {
+export function validateSql(sql: string): { isExplain: boolean; sql: string } {
   if (!initialized) throw new Error("SQL parser not initialized. Call initParser() first.")
 
-  // Strip BOM
-  const cleaned = sql.replace(/^\uFEFF/, "").trim()
+  // Strip BOM, trim, drop trailing semicolons (they break querySql's cursor
+  // wrapper). Internal semicolons survive, so multi-statement is still caught.
+  const cleaned = sql.replace(/^\uFEFF/, "").trim().replace(/\s*;+\s*$/, "")
   if (!cleaned) throw new Error("Empty query.")
 
   let ast: ReturnType<typeof parseSync>
@@ -73,7 +74,7 @@ export function validateSql(sql: string): { isExplain: boolean } {
 
   if (stmtType === "ExplainStmt") {
     validateExplain(stmt.ExplainStmt)
-    return { isExplain: true }
+    return { isExplain: true, sql: cleaned }
   }
 
   if (stmtType !== "SelectStmt") {
@@ -83,7 +84,7 @@ export function validateSql(sql: string): { isExplain: boolean } {
   // Collect CTE names so we can distinguish them from real table references
   const cteNames = new Set<string>()
   validateSelect(stmt.SelectStmt, cteNames)
-  return { isExplain: false }
+  return { isExplain: false, sql: cleaned }
 }
 
 // ---------------------------------------------------------------------------

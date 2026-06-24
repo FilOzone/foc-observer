@@ -147,8 +147,9 @@ export class PonderClient {
     }
   }
 
-  async querySql(sql: string): Promise<SqlResult> {
-    const { isExplain } = validateSql(sql)
+  async querySql(rawSql: string): Promise<SqlResult> {
+    // sql is normalized (trailing semicolons stripped) for the cursor wrapper.
+    const { isExplain, sql } = validateSql(rawSql)
 
     const client = await this.pool.connect()
     try {
