@@ -135,7 +135,7 @@ Amounts are bigint (18 decimals). Gas cost in FIL = m.gas_used * m.effective_gas
   }))
 
   server.registerTool("list_tables", {
-    description: "List all FOC event tables with row counts and descriptions. Tables prefixed by contract: pdp_, fwss_, fp_, spr_, skr_.",
+    description: "List all FOC event tables with approximate row counts and descriptions. Row counts are planner estimates (fast, may be slightly stale); use COUNT(*) via query_sql for an exact figure. Tables prefixed by contract: pdp_, fwss_, fp_, spr_, skr_.",
     inputSchema: { network: networkEnum },
   }, logged("list_tables", async ({ network }) => {
     try {
