@@ -53,13 +53,20 @@ const app = new Hono()
 app.route("/", restApp)
 
 // MCP endpoint (Streamable HTTP transport, stateless)
-app.all("/mcp", async (c) => {
+app.post("/mcp", async (c) => {
   const mcpServer = createMcpServer(ponderClients, contractReaders, betterstack, subgraph)
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined })
   await mcpServer.connect(transport)
   const response = await transport.handleRequest(c.req.raw)
   return response
 })
+
+// Stateless: no session, so no server-initiated stream. Reject the client's
+// standalone GET listen-stream (and DELETE) with 405 instead of opening an SSE
+// stream that never closes, which hangs strict clients at startup.
+app.on(["GET", "DELETE"], "/mcp", (c) =>
+  c.json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null }, 405, { Allow: "POST" }),
+)
 
 await initParser()
 
