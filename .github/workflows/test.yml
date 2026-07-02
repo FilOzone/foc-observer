@@ -13,7 +13,7 @@ jobs:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
@@ -30,7 +30,7 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
@@ -49,7 +49,7 @@ jobs:
       run:
         working-directory: indexer
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
