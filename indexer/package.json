@@ -4,10 +4,17 @@
   "type": "module",
   "scripts": {
     "dev": "ponder dev",
+    "dev:calibnet": "PONDER_NETWORK=calibnet ponder dev",
+    "dev:mainnet": "PONDER_NETWORK=mainnet ponder dev",
     "start": "ponder start",
+    "start:calibnet": "PONDER_NETWORK=calibnet ponder start",
+    "start:mainnet": "PONDER_NETWORK=mainnet ponder start",
     "codegen": "ponder codegen",
+    "codegen:calibnet": "PONDER_NETWORK=calibnet RPC_URL=http://localhost:1235/rpc/v1 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen",
+    "codegen:mainnet": "PONDER_NETWORK=mainnet RPC_URL=http://localhost:1234/rpc/v1 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen",
     "generate-abis": "./scripts/generate-abis.sh",
-    "typecheck": "ln -sf ponder.config.mainnet.ts ponder.config.ts && RPC_URL=http://localhost:1234 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen && tsc --noEmit; rc=$?; rm -f ponder.config.ts; exit $rc"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "npm run codegen:mainnet && tsc --noEmit"
   },
   "dependencies": {
     "hono": "^4.12",

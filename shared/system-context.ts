@@ -429,7 +429,7 @@ The current FOC contracts (same proxy addresses) were deployed across two releas
 - Deployment of the current proxy addresses on both networks.
 - Calibnet proxy deployment: FilecoinPay ~epoch 3,120,400 (2025-10-20), PDPVerifier/FWSS/SPRegistry ~epoch 3,141,300 (2025-10-27). First indexed event: fp_deposit at block 3,125,196 (2025-10-21).
 - Mainnet proxy deployment: FilecoinPay ~epoch 5,425,000, PDPVerifier ~5,441,500, FWSS ~5,459,500. First indexed event: fp_deposit at block 5,465,823 (2025-11-04) - ~40k epoch gap between deployment and first user activity.
-- For a precise indexed-from block per network, query \`MIN(block_number)\` on a high-coverage table (e.g. \`fp_deposit\`). The \`--startBlock\` in \`indexer/ponder.config.<network>.ts\` sits below first activity.
+- For a precise indexed-from block per network, query \`MIN(block_number)\` on a high-coverage table (e.g. \`fp_deposit\`). The \`START_BLOCK\` in \`indexer/src/networks.ts\` sits below first activity.
 - Introduced: FWSS GA contracts, FilecoinPay v1, PDPVerifier v3.1.0, ServiceProviderRegistry with capability key-value store, SessionKeyRegistry.
 - Source: [filecoin-services v1.0.0](https://github.com/FilOzone/filecoin-services/releases/tag/v1.0.0)
 

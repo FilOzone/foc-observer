@@ -52,6 +52,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      PONDER_NETWORK: calibnet
+      PONDER_STRICT_ENV: "true"
       DATABASE_URL: postgres://ponder:ponder@postgres-calibnet:5432/ponder
       RPC_URL: ${CALIBNET_RPC_URL:?}
       PORT: 17827
@@ -63,7 +65,6 @@ services:
     command: ["npm", "start", "--", "--schema", "${CALIBNET_DATA_SCHEMA:-data_v1}", "--views-schema", "public"]
     restart: unless-stopped
     volumes:
-      - ./indexer/ponder.config.calibnet.ts:/app/ponder.config.ts
       - ./indexer/ponder.schema.ts:/app/ponder.schema.ts
       - ./indexer/src:/app/src
       - ./indexer/abis:/app/abis
@@ -76,6 +77,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      PONDER_NETWORK: mainnet
+      PONDER_STRICT_ENV: "true"
       DATABASE_URL: postgres://ponder:ponder@postgres-mainnet:5432/ponder
       RPC_URL: ${MAINNET_RPC_URL:?}
       PORT: 17828
@@ -83,7 +86,6 @@ services:
     command: ["npm", "start", "--", "--schema", "${MAINNET_DATA_SCHEMA:-data_v1}", "--views-schema", "public"]
     restart: unless-stopped
     volumes:
-      - ./indexer/ponder.config.mainnet.ts:/app/ponder.config.ts
       - ./indexer/ponder.schema.ts:/app/ponder.schema.ts
       - ./indexer/src:/app/src
       - ./indexer/abis:/app/abis
