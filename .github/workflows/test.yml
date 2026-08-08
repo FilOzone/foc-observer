@@ -59,7 +59,9 @@ jobs:
           cache: npm
           cache-dependency-path: indexer/package-lock.json
       - run: npm ci
-      # typecheck symlinks ponder.config.mainnet.ts -> ponder.config.ts,
-      # runs ponder codegen to materialize ponder-env.d.ts, then tsc --noEmit.
-      # No DB or RPC needed; codegen accepts dummy connection strings.
+      # Tests load the actual config under both networks and strict-mode failures.
+      - run: npm test
+      # Typecheck runs mainnet codegen to materialize ponder-env.d.ts, then
+      # tsc --noEmit. No DB or RPC is needed; codegen accepts dummy values.
+      - run: npm run codegen:calibnet
       - run: npm run typecheck
