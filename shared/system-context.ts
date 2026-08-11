@@ -96,6 +96,7 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 - Storacha runs a separate service contract (FWSS fork) as both operator and validator on their rails. Their SPs use did:key names in ServiceProviderRegistry and are not managed by FWSS. Storacha is the largest FilecoinPay user on mainnet by deposit and settlement volume.
 - 3 rails per dataset: PDP (storage, validated), CDN (bandwidth, unvalidated), cache-miss (origin fetch, unvalidated).
 - fwss tables use data_set_id, pdp tables use set_id, same value, JOIN them directly.
+- Query perf: aggregate per set/rail with GROUP BY joins, not per-row correlated subqueries; avoid COUNT(*) on large tables (pdp_possession_proven, fwss_piece_added) which seq-scan; MAX(block_number) for head, bounded block/time ranges for windows; LIMIT while exploring; 30s statement timeout.
 
 ## Source Code and References
 

@@ -42,6 +42,10 @@ import { dirname } from "node:path"
 const LOG_PATH = process.env.FOC_LOG_PATH || ""
 const SLOW_QUERY_MS = 500
 
+// Indexer head/lag polls (external dashboards) dominate volume with no analytical
+// value. Fast ones are dropped from the persisted file; slow/errored ones are kept.
+const HEARTBEAT_SQL = /^\s*select\s+(count\(\*\)\s+as\s+n,\s*)?max\(block_number\)\s+as\s+m\s+from\s+[a-z_]+\s*$/i
+
 let logReady: Promise<void> | undefined
 
 async function ensureLogDir(): Promise<void> {
@@ -152,7 +156,8 @@ export function logMcp(
 }
 
 export function logRest(method: string, path: string, status: number, durationMs: number): void {
-  emit({ type: "rest", ts: new Date().toISOString(), method, path, status, durationMs })
+  // Access log: stdout only, never persisted (pure noise in the analysis file).
+  emit({ type: "rest", ts: new Date().toISOString(), method, path, status, durationMs }, false)
 }
 
 export function logSql(
@@ -173,18 +178,19 @@ export function logSql(
     ...opts,
   }
   if (durationMs >= SLOW_QUERY_MS) entry.slow = true
-  emit(entry)
+  const persist = entry.slow || Boolean(opts?.error) || !HEARTBEAT_SQL.test(sql)
+  emit(entry, persist)
 }
 
 export function logStartup(port: number, networks: string[], betterstack: boolean): void {
   emit({ type: "startup", ts: new Date().toISOString(), port, networks, betterstack })
 }
 
-function emit(entry: LogEntry): void {
+function emit(entry: LogEntry, persist = true): void {
   const line = JSON.stringify(entry)
   process.stdout.write(line + "\n")
 
-  if (LOG_PATH) {
+  if (persist && LOG_PATH) {
     if (!logReady) logReady = ensureLogDir()
     logReady.then(() => appendFile(LOG_PATH, line + "\n").catch(() => {}))
   }
