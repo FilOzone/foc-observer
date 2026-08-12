@@ -42,7 +42,7 @@ export class PonderClient {
     this.network = network
     this.pool = new pg.Pool({
       connectionString: network.databaseUrl,
-      max: 5,
+      max: 12,
       statement_timeout: 30_000,
     })
   }
