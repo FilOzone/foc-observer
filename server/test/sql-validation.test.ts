@@ -131,6 +131,26 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("SELECT jsonb_array_length(pieces::jsonb) FROM pdp_pieces_added")).not.toThrow()
   })
 
+  test("allows statistical aggregates", () => {
+    expect(() => validateSql("SELECT stddev(amount), stddev_samp(amount), stddev_pop(amount) FROM fp_deposit")).not.toThrow()
+    expect(() => validateSql("SELECT variance(amount), var_samp(amount), var_pop(amount) FROM fp_deposit")).not.toThrow()
+    expect(() => validateSql("SELECT corr(amount, block_number), covar_pop(amount, block_number), covar_samp(amount, block_number) FROM fp_deposit")).not.toThrow()
+  })
+
+  test("allows ordered-set aggregates (WITHIN GROUP)", () => {
+    expect(() => validateSql("SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY amount) FROM fp_deposit")).not.toThrow()
+    expect(() => validateSql("SELECT percentile_disc(0.9) WITHIN GROUP (ORDER BY amount) AS p90 FROM fp_deposit")).not.toThrow()
+    expect(() => validateSql("SELECT mode() WITHIN GROUP (ORDER BY amount) FROM fp_deposit")).not.toThrow()
+  })
+
+  test("ordered-set WITHIN GROUP does not bypass function validation", () => {
+    expect(() => validateSql("SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY pg_read_file('/etc/passwd')) FROM fp_deposit")).toThrow(/pg_read_file.*not allowed/)
+  })
+
+  test("ordered-set WITHIN GROUP does not bypass table validation", () => {
+    expect(() => validateSql("SELECT mode() WITHIN GROUP (ORDER BY (SELECT COUNT(*) FROM pg_shadow)) FROM fp_deposit")).toThrow(/not a known FOC event table/)
+  })
+
   test("strips BOM prefix", () => {
     expect(() => validateSql("\uFEFFSELECT 1")).not.toThrow()
   })

@@ -58,7 +58,7 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 
 **Service contracts (opinionated applications built on FilecoinPay):**
 - **FWSS (FilecoinWarmStorageService)**: FilOz's warm storage service. Creates 3 payment rails per dataset (PDP, CDN, cache-miss), validates proving, manages pricing. Operator: 0x8408502033c418e1bbc97ce9ac48e5528f371a9f (mainnet). Indexed in fwss_* tables.
-- **Storacha (FWSS fork)**: A separate FWSS-fork listener contract running on the SAME PDPVerifier and SAME FilecoinPay as FilOz's FWSS. Mainnet: 0x56e53c5e7f27504b810494cc3b88b2aa0645a839. Calibnet: 0x0c6875983B20901a7C3c86871f43FdEE77946424. Their SPs are registered in the SAME ServiceProviderRegistry but use did:key names. Largest FilecoinPay user by volume. Indexed in storacha_fwss_* tables (mirror of fwss_* schema).
+- **Storacha (FWSS fork)**: A separate FWSS-fork listener contract running on the SAME PDPVerifier and SAME FilecoinPay as FilOz's FWSS. Mainnet: 0x56e53c5e7f27504b810494cc3b88b2aa0645a839. Calibnet: 0x0c6875983B20901a7C3c86871f43FdEE77946424. Their SPs are registered in the SAME ServiceProviderRegistry but use did:key names. Wound down, historical only (see Storacha section). Indexed in storacha_fwss_* tables (mirror of fwss_* schema).
 - **ProviderIdSet**: Curated endorsed provider set, maintained by FilOz.
 
 **FilBeam (CDN bandwidth ledger):** Non-upgradeable operator contract. Off-chain measures CDN/cache-miss bytes per dataset, periodically calls recordUsageRollups -> emits UsageReported. Settlement of CDN rails happens via FilBeamOperator.settleCDNPaymentRails -> FWSS.settleFilBeamPaymentRails -> FilecoinPay one-time payment. Indexed in fb_* tables. Multiple historical addresses per network (redeployed periodically); join to fwss_data_set_created via data_set_id, then to fp_rail_created via cdn_rail_id / cache_miss_rail_id. NOT used by Storacha.
@@ -80,7 +80,7 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 - **FaultRecord**: Fires only when nextProvingPeriod is called with missed proof. Silent SPs produce NO fault events.
 - **Operator**: Contract that manages rails on FilecoinPay. Multiple operators can exist: FWSS is one, Storacha runs another. Query SELECT DISTINCT operator FROM fp_rail_created to find all operators. Validator: arbiter during settlement (checks proofs on PDP rails; CDN rails have no validator).
 - **Settlement**: Funds flow from payer to payee. For PDP rails: proven periods = full payment, faulted = zero, open = blocked. All fp_rail_settled amount fields are INCREMENTAL per event, SUM() for totals.
-- **USDFC**: Payment token. All amounts bigint, 18 decimals (divide by 1e18).
+- **USDFC**: Primary payment token, bigint, 18 decimals. Token decimals vary though: axlUSDC = 6 (see Data Conventions).
 - **Epoch**: Filecoin block height, ~30 seconds. block_number in database = epoch.
 - **Piece**: Data unit with PieceCID (max 1016 MiB, Curio limit). raw_size in fwss_piece_added is the exact original data size.
 - **Leaf**: 32-byte chunk of FR32-expanded piece data. leafCount reflects expanded size, do NOT use as a proxy for raw data size.
@@ -88,12 +88,12 @@ FOC is a layered system. The foundation is generic; service contracts are opinio
 
 ## Data Conventions
 
-- Amounts: bigint, 18 decimals. 1 USDFC = 1000000000000000000.
+- Amounts: bigint. Decimals are PER-TOKEN, not universally 18: USDFC and FIL = 18, axlUSDC = 6. Never SUM(amount)/1e18 across mixed-token rails (axlUSDC's 6-decimal values silently vanish); JOIN fp_rail_created.token and scale per token, GROUP BY token on every fp_* aggregate.
 - Timestamps: unix seconds. Use TO_TIMESTAMP(timestamp) for dates.
 - Provider IDs: small integers. Always resolve to names via get_providers, show as "Name (ID)".
 - Dataset metadata: "source" identifies creating app (e.g. "filecoin-pin"). Indexed column.
 - Known wallets (both networks): DealBot (legacy): 0xa5F90bc2AA73a2E0Bad4D7092a932644d5dD5d71, DealBot (current multisig): 0x305025D07c1DEe47F25a4990179eFf2becddCA0B, Storacha: 0x3c1ae7a70a2b51458fcb7927fd77aae408a1b857, Tippy/ezpdpz: 0x3E4E5f067cfdA2F16Aade21912B8324c3D9624F8 (endorsed SP operator), PinMe: 0xd19d84c77bbb901971e460830e310933a210dbaa. Use payer address to filter by party, not source metadata.
-- Storacha runs a separate service contract (FWSS fork) as both operator and validator on their rails. Their SPs use did:key names in ServiceProviderRegistry and are not managed by FWSS. Storacha is the largest FilecoinPay user on mainnet by deposit and settlement volume.
+- FilecoinPay is shared across services: FWSS and PoRep Market (porep_* tables, see Aggregate Metrics) are live; Storacha (storacha_fwss_*) is wound down, see the Storacha section. Don't assume a rail is FWSS - scope by operator.
 - 3 rails per dataset: PDP (storage, validated), CDN (bandwidth, unvalidated), cache-miss (origin fetch, unvalidated).
 - fwss tables use data_set_id, pdp tables use set_id, same value, JOIN them directly.
 - Query perf: aggregate per set/rail with GROUP BY joins, not per-row correlated subqueries; avoid COUNT(*) on large tables (pdp_possession_proven, fwss_piece_added) which seq-scan; MAX(block_number) for head, bounded block/time ranges for windows; LIMIT while exploring; 30s statement timeout.
@@ -201,20 +201,22 @@ SELECT d.* FROM fwss_data_set_created d WHERE NOT EXISTS (SELECT 1 FROM fwss_ser
 
 ## Proving and Faults
 
+This section is PDP possession-proving (FWSS, Storacha). PoRep Market proves differently: SLI-oracle attestation (porep_sli_attestation_update), no proving periods or pdp_* faults - don't apply it to porep_* deals.
+
 **Proving periods**: Calibnet = 240 epochs (~2h). Mainnet = 2880 epochs (~24h). The SP must call provePossession() within the challenge window each period.
 
-**Proving period convention**: Exclusive-inclusive ranges (A, A+M]. Activation epoch A is a boundary, not billable. Period N covers epochs (A+N*M, A+(N+1)*M]. The deadline is A+(N+1)*M.
+**Proving period convention**: Exclusive-inclusive ranges (A, A+M]. Activation epoch A is a boundary, not billable. Period N covers epochs (A+N*M, A+(N+1)*M], deadline A+(N+1)*M.
 
 **FaultRecord events**: CRITICAL - FaultRecord only fires when nextProvingPeriod() is called. If an SP stops calling nextProvingPeriod entirely, NO fault events are emitted. Silence does NOT mean the SP is healthy. To detect truly dead SPs, look for data sets with no recent pdp_next_proving_period events.
 
-**periodsFaulted**: The count of consecutive proving periods missed since the last successful proof. This resets to 0 when the SP proves successfully. A periodsFaulted of 20 means the SP missed 20 consecutive periods before nextProvingPeriod was called.
+**periodsFaulted**: The count of consecutive proving periods missed since the last successful proof, reset to 0 when the SP proves successfully.
 
 **Proving status from get_dataset_proving()**:
 - live: is the data set active in PDPVerifier
 - provenThisPeriod: has the SP proven in the current period (false + approaching deadline = about to fault)
 - lastProvenEpoch: when the last successful proof was submitted
 - provingDeadline: deadline for the current period
-- activePieceCount: number of live pieces (0 after all pieces removed)
+- activePieceCount: live piece count (0 when all removed)
 
 ## Settlement Validation
 
@@ -232,13 +234,17 @@ This means:
 
 ## Token Addresses
 
-**USDFC** (the payment token for FOC storage):
+Decimals are PER-TOKEN, not universally 18. Scale each rail by its own token's decimals; never SUM(amount)/1e18 across mixed-token rails.
+
+**USDFC** (primary FOC payment token, 18 decimals):
 - Calibnet: 0xb3042734b608a1B16e9e86B374A3f3e389B4cDf0
 - Mainnet: 0x80B98d3aa09ffff255c3ba4A241111Ff1262F045
 
-**Native FIL**: represented as address(0) = 0x0000000000000000000000000000000000000000
+**axlUSDC** (Axelar-bridged USDC, mainnet only, 6 decimals): 0xEB466342C4d449BC9f53A865D5Cb90586f405215. Used by PoRep Market; can carry material mainnet value, so scaling by 1e18 or omitting it understates totals. Divide by 1e6, not 1e18.
 
-In FilecoinPay tables, the token column distinguishes USDFC-denominated rails from FIL-denominated rails. Most FOC rails use USDFC. Filter by token address to separate them.
+**Native FIL**: address(0) = 0x0000000000000000000000000000000000000000 (18 decimals).
+
+The token column identifies the currency; filter or GROUP BY it on every aggregate.
 
 ## FilecoinPay Analytics
 
@@ -463,7 +469,7 @@ The current FOC contracts (same proxy addresses) were deployed across two releas
 
 To query upgrade history: SELECT contract, version, implementation, TO_TIMESTAMP(timestamp) as upgraded_at FROM contract_upgraded ORDER BY block_number. This shared table covers PDPVerifier, FWSS, and SPRegistry upgrades.
 
-**Orphan rails from defunct service contracts**: FilecoinPay is shared; rails created by pre-v1.0.0 FWSS or other abandoned operators persist in fp_* with no matching fwss_data_set_created. Filter \`fp_rail_created.operator\` to scope aggregates. Known abandoned operator: calibnet 0xd3de778c05f89e1240ef70100fb0d9e5b2efd258 (rails 1-23, pre-v1.0.0 FWSS, never settle).
+**Rails with no fwss_/storacha_ dataset**: FilecoinPay is shared. Two causes: (a) defunct pre-v1.0.0 operators (calibnet 0xd3de778c05f89e1240ef70100fb0d9e5b2efd258, rails 1-23, never settle); (b) live PoRep Market - those map to porep_rail_id_updated instead. Scope aggregates by \`fp_rail_created.operator\`, but dataset-less does NOT mean dead, so do not filter these out as junk.
 
 Interpretation: pre-~epoch 3,414,500 (calibnet) / 5,476,400 (mainnet) is v1.0.0; v1.1.0 ran after; v1.2.0 added the sybil-fee burn rail; v1.3.0 (calibnet only) replaces it with a direct-to-SP 0.025 USDFC fee, per-dataset pricing, and the abandonment lifecycle.
 
@@ -543,31 +549,25 @@ Three places to get fault/proving data:
 
 ## Aggregate FilecoinPay Metrics (network-wide, all operators)
 
-CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables, since that only captures FWSS-operated rails and misses other operators like Storacha (which accounts for ~74% of mainnet settlement volume).
+CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables, which only capture FWSS-operated rails and miss every other operator (FWSS, Storacha [wound down], PoRep Market, and occasional one-offs). Do not assume FWSS dominates; operator shares shift, so compute them per question via Revenue by operator.
 
-**Total revenue**: SUM(total_net_payee_amount::numeric)/1e18 FROM fp_rail_settled. This is all USDFC paid to all SPs across all operators.
-**Total revenue including one-time payments**: Add SUM(net_payee_amount::numeric)/1e18 FROM fp_one_time_payment.
-**ARR (Annual Recurring Revenue)**: Use fp_rail_rate_modified (NOT fwss_rail_rate_updated which is FWSS-only). For active non-terminated non-finalized rails: SUM the latest new_rate per rail_id, multiply by epochs_per_year (2880 * 365). Or query live rail state via get_rail for each active rail.
-**Revenue by operator**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY operator. This shows FWSS vs Storacha vs other operators.
-**Revenue by SP**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY payee. Each payee is an SP address.
-**Deposits/TVL**: fp_deposit and fp_withdrawal directly, no FWSS join needed.
+CRITICAL: Decimals are per-token; a bare SUM(amount)/1e18 drops all axlUSDC (6-decimal) value to ~0. JOIN fp_rail_created.token and GROUP BY token on every aggregate.
 
-Known operators on mainnet:
-- FWSS: 0x8408502033c418e1bbc97ce9ac48e5528f371a9f
-- Storacha: 0x56e53c5e7f27504b810494cc3b88b2aa0645a839
-- Discover others: SELECT DISTINCT operator, COUNT(*) as rails FROM fp_rail_created GROUP BY operator
+**Total revenue (per token)**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY rc.token; divide each token's SUM(total_net_payee_amount::numeric) by its decimals (USDFC/FIL 1e18, axlUSDC 1e6). All value paid to all SPs across all operators.
+**Including one-time payments**: add SUM(net_payee_amount::numeric) FROM fp_one_time_payment, same per-token scaling.
+**ARR (Annual Recurring Revenue)**: Use fp_rail_rate_modified (NOT fwss_rail_rate_updated which is FWSS-only). For active non-terminated non-finalized rails: SUM the latest new_rate per rail_id, multiply by epochs_per_year (2880 * 365), per token. Or query live rail state via get_rail.
+**Revenue by operator**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY operator, token. Shows FWSS vs Storacha vs PoRep Market.
+**Revenue by SP**: same JOIN, GROUP BY payee, token. Each payee is an SP address.
+**Deposits/TVL**: fp_deposit and fp_withdrawal directly, GROUP BY token, no FWSS join needed.
 
-## Storacha (separate listener on shared infrastructure)
+Operators on mainnet (recompute shares as above):
+- FWSS (FilOz), 0x8408502033c418e1bbc97ce9ac48e5528f371a9f: live.
+- Storacha, 0x56e53c5e7f27504b810494cc3b88b2aa0645a839: wound down, historical.
+- PoRep Market (fidlabs cold-storage, aka "FCSS"): a separate service on shared FilecoinPay, settling in USDFC and axlUSDC, indexed in porep_* tables. One Validator (operator == validator) per deal, so operator is per-deal, not a service id, and its rails have no fwss_*/storacha_fwss_* row. Attribute via porep_rail_id_updated.rail_id = fp_rail_created.rail_id, then porep_deal_proposal_created for client/SP/size. Own SP registry, per-deal-token pricing.
 
-Storacha runs a fork of FWSS as a parallel listener contract on the SAME PDPVerifier and SAME FilecoinPay used by FilOz's FWSS. Their datasets, pieces, faults, and rate updates are tracked in storacha_fwss_* tables (mirror of the fwss_* schema). Their rails, settlements, and deposits are in fp_* tables shared with FWSS. Their proving periods and proofs are in pdp_* tables shared with FWSS.
+## Storacha (wound down 2026-04, historical only)
 
-**To query Storacha-specific data**: use storacha_fwss_* tables exactly the same way you'd use fwss_* tables. Schema is identical (dataSetId, payer, payee, etc.).
-
-**To query Storacha settlements**: filter fp_rail_settled / fp_rail_created by operator = '0x56e53c5e7f27504b810494cc3b88b2aa0645a839' (mainnet) or '0x0c6875983b20901a7c3c86871f43fdee77946424' (calibnet). Same fp_* tables as FWSS, just different operator.
-
-**To query Storacha proving health**: get_proving_health works for ALL providers regardless of which listener owns their datasets, because it uses pdp_* tables (shared) and the proof-gap method. Storacha SPs use did:key names in get_providers.
-
-**Storacha-specific facts**: Their pricing is 0.9 USDFC/TiB/month (vs FWSS's 2.5). They do not use FilBeam (CDN tables fb_* will not have Storacha activity). They revert SP changes (storacha_fwss_data_set_sp_changed will be empty). They are version 1.1.0 of the FWSS contract; FilOz is on 1.2.0. The events are byte-identical between versions.
+Storacha ran a fork of FWSS as a parallel listener on the SAME PDPVerifier and FilecoinPay as FilOz's FWSS. Last mainnet settlement was 2026-04-19; treat all Storacha data as historical, not live. Datasets, pieces, faults, and rates are in storacha_fwss_* tables (identical schema to fwss_*, queried the same way); rails and settlements are in fp_* filtered by operator = '0x56e53c5e7f27504b810494cc3b88b2aa0645a839' (mainnet) or '0x0c6875983b20901a7c3c86871f43fdee77946424' (calibnet). SPs use did:key names. Pricing was 0.9 USDFC/TiB/month (vs FWSS 2.5); stayed on FWSS v1.2.x semantics; never used FilBeam. get_proving_health still works for their SPs (shared pdp_* tables).
 
 ## FilBeam (incentivized data delivery / CDN)
 
@@ -649,7 +649,7 @@ For gas analysis: JOIN your event table to tx_meta USING (tx_hash). Piece count 
 
 **Total data stored**: SUM(raw_size) from fwss_piece_added gives total bytes of original (unpadded) data. Divide by 1e12 for TiB. Filter by provider via JOIN with fwss_data_set_created. Exclude terminated datasets by LEFT JOIN with fwss_service_terminated and filtering WHERE terminated IS NULL.
 
-**Total revenue**: SUM(total_net_payee_amount) / 1e18 from fp_rail_settled gives all-time USDFC paid to SPs. Join with fwss_data_set_created via pdp_rail_id for per-provider breakdown. Remember: these fields are INCREMENTAL per event, so SUM() is correct.
+**Total revenue**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY token, and scale each token by its decimals (USDFC 1e18, axlUSDC 1e6); a bare SUM()/1e18 drops all axlUSDC value. Join fwss_data_set_created via pdp_rail_id for per-FWSS-provider breakdown. Fields are INCREMENTAL per event, so SUM() is correct.
 
 **Time filtering**: Use timestamp column (unix seconds). Last 7 days: WHERE timestamp > EXTRACT(EPOCH FROM NOW()) - 7*86400. By date: WHERE TO_TIMESTAMP(timestamp) >= '2026-03-01'. By epoch: WHERE block_number > 5860000.
 

@@ -144,3 +144,19 @@ export const storachaFwssOwnershipTransferred = tables.storacha_fwss_ownership_t
 export const storachaFwssServiceDeployed = tables.storacha_fwss_service_deployed
 export const storachaFwssFilbeamControllerChanged = tables.storacha_fwss_filbeam_controller_changed
 export const storachaFwssViewContractSet = tables.storacha_fwss_view_contract_set
+
+// PoRep Market (fidlabs cold-storage market on shared FilecoinPay), mainnet V1
+export const porepDealProposalCreated = tables.porep_deal_proposal_created
+export const porepDealAccepted = tables.porep_deal_accepted
+export const porepValidatorUpdated = tables.porep_validator_updated
+export const porepRailIdUpdated = tables.porep_rail_id_updated
+export const porepDealCompleted = tables.porep_deal_completed
+export const porepDealTerminated = tables.porep_deal_terminated
+export const porepDealRejected = tables.porep_deal_rejected
+export const porepDealProposalExpired = tables.porep_deal_proposal_expired
+export const porepProxyCreated = tables.porep_proxy_created
+export const porepSpRegistered = tables.porep_sp_registered
+export const porepSpPayeeUpdated = tables.porep_sp_payee_updated
+export const porepSpPriceUpdated = tables.porep_sp_price_updated
+export const porepSpCapabilitiesUpdated = tables.porep_sp_capabilities_updated
+export const porepSliAttestationUpdate = tables.porep_sli_attestation_update

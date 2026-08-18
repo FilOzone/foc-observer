@@ -727,4 +727,143 @@ export const TABLES: Record<string, TableDef> = {
       viewContract: { type: "hex" },
     },
   },
+
+  // -- PoRep Market (fidlabs cold-storage market on shared FilecoinPay) --
+  // A separate service with its own SP registry, DataCap+SLI proof, and
+  // one per-deal Validator contract as the FilecoinPay operator. These tables
+  // track mainnet V1 events. Bridge to payment data via porep_rail_id_updated.
+  porep_deal_proposal_created: {
+    description: "PoRep Market deal proposed. client = payer, providerId = SP Filecoin actor id (uint64), the four SLI columns are the deal's required thresholds, manifestHash = content id, totalDealSize in bytes. Price is recorded in porep_sp_price_updated. Bridge to the payment rail via porep_rail_id_updated.rail_id -> fp_rail_created.rail_id.",
+    columns: {
+      dealId: { type: "bigint" },
+      client: { type: "hex", note: "payer address" },
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+      retrievabilityBps: { type: "int", note: "required SLI: retrievability, basis points" },
+      bandwidthMbps: { type: "int", note: "required SLI: bandwidth, Mbps" },
+      latencyMs: { type: "int", note: "required SLI: latency, ms" },
+      indexingPct: { type: "int", note: "required SLI: indexing, percent" },
+      manifestLocation: { type: "text" },
+      manifestHash: { type: "hex", note: "bytes32 content-addressed deal data hash" },
+      totalDealSize: { type: "bigint", note: "bytes" },
+      proposedAtBlock: { type: "bigint" },
+    },
+    indexes: ["dealId", "client", "providerId", "blockNumber"],
+  },
+  porep_deal_accepted: {
+    description: "PoRep Market deal accepted by the SP (Proposed -> Accepted)",
+    columns: {
+      dealId: { type: "bigint" },
+      owner: { type: "hex" },
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+    },
+    indexes: ["dealId", "providerId"],
+  },
+  porep_validator_updated: {
+    description: "PoRep deal's per-deal Validator (FilecoinPay operator) contract set. validator = fp_rail_created.operator. Redundant with porep_proxy_created but keyed by dealId.",
+    columns: {
+      dealId: { type: "bigint" },
+      validator: { type: "hex" },
+    },
+    indexes: ["dealId", "validator"],
+  },
+  porep_rail_id_updated: {
+    description: "Links a PoRep deal to its FilecoinPay rail. Primary bridge: railId joins fp_rail_created / fp_rail_settled; dealId joins the porep_deal_* tables. Lets fp_* revenue/settlement analytics attribute to PoRep deals, clients, and SPs.",
+    columns: {
+      dealId: { type: "bigint" },
+      railId: { type: "bigint" },
+    },
+    indexes: ["dealId", "railId", "blockNumber"],
+  },
+  porep_deal_completed: {
+    description: "PoRep Market deal completed (Accepted -> Completed). actualSizeBytes = realized stored size.",
+    columns: {
+      dealId: { type: "bigint" },
+      client: { type: "hex" },
+      actualSizeBytes: { type: "bigint", note: "bytes" },
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+    },
+    indexes: ["dealId", "providerId"],
+  },
+  porep_deal_terminated: {
+    description: "PoRep Market deal terminated. endEpoch = payment obligation end.",
+    columns: {
+      dealId: { type: "bigint" },
+      terminator: { type: "hex" },
+      endEpoch: { type: "bigint", note: "epoch" },
+    },
+    indexes: ["dealId"],
+  },
+  porep_deal_rejected: {
+    description: "PoRep Market deal proposal rejected by the SP",
+    columns: {
+      dealId: { type: "bigint" },
+      rejector: { type: "hex" },
+    },
+    indexes: ["dealId"],
+  },
+  porep_deal_proposal_expired: {
+    description: "PoRep Market deal proposal expired without acceptance",
+    columns: {
+      dealId: { type: "bigint" },
+      expiredAtBlock: { type: "bigint" },
+    },
+    indexes: ["dealId"],
+  },
+  porep_proxy_created: {
+    description: "PoRep ValidatorFactory deployed a per-deal Validator (the FilecoinPay operator for that deal). proxy = fp_rail_created.operator; dealId links to porep_deal_*. Discovers every per-deal operator address.",
+    columns: {
+      proxy: { type: "hex", note: "per-deal Validator = fp_rail_created.operator" },
+      dealId: { type: "bigint" },
+    },
+    indexes: ["proxy", "dealId"],
+  },
+  porep_sp_registered: {
+    description: "SP registered in the PoRep SP registry (separate from FOC ServiceProviderRegistry). providerId = Filecoin actor id; organization = the registering wallet (also the default payee).",
+    columns: {
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+      organization: { type: "hex" },
+    },
+    indexes: ["providerId", "organization"],
+  },
+  porep_sp_payee_updated: {
+    description: "PoRep SP payee address changed. newPayee = fp_rail_created.payee; providerId = SP Filecoin actor id. Resolves rail payees to PoRep SPs. This event fires only when the payee changes. An SP whose initial custom payee never changes requires a getPayee(providerId) RPC read; otherwise organization from porep_sp_registered is the default payee.",
+    columns: {
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+      oldPayee: { type: "hex" },
+      newPayee: { type: "hex" },
+    },
+    indexes: ["providerId", "newPayee"],
+  },
+  porep_sp_price_updated: {
+    description: "PoRep SP price changed. newPrice = price per 32GiB sector per month as a raw integer. Deal rate = price * sectorCount / 86400 epochs. The payment token is chosen per-deal at createRail (mainnet: USDFC or axlUSDC), so scale by the deal's rail token decimals (USDFC 1e18, axlUSDC 1e6), not a fixed 1e18.",
+    columns: {
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+      oldPrice: { type: "bigint" },
+      newPrice: { type: "bigint", note: "per 32GiB sector per month, smallest units of the deal's payment token (token is per-deal, not stored here)" },
+    },
+    indexes: ["providerId"],
+  },
+  porep_sp_capabilities_updated: {
+    description: "PoRep SP advertised SLI capability thresholds changed. The four SLI columns are the SP's advertised capabilities.",
+    columns: {
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+      retrievabilityBps: { type: "int", note: "advertised SLI: retrievability, basis points" },
+      bandwidthMbps: { type: "int", note: "advertised SLI: bandwidth, Mbps" },
+      latencyMs: { type: "int", note: "advertised SLI: latency, ms" },
+      indexingPct: { type: "int", note: "advertised SLI: indexing, percent" },
+    },
+    indexes: ["providerId"],
+  },
+  porep_sli_attestation_update: {
+    description: "PoRep SLI oracle attestation for an SP. The four SLI columns are the measured values used to evaluate deal requirements during settlement. A below-threshold attestation causes zero payment for the settlement interval. lastUpdate is the Filecoin epoch of the attestation.",
+    columns: {
+      providerId: { type: "bigint", note: "SP Filecoin actor id" },
+      lastUpdate: { type: "bigint", note: "Filecoin epoch of attestation" },
+      retrievabilityBps: { type: "int", note: "attested SLI: retrievability, basis points" },
+      bandwidthMbps: { type: "int", note: "attested SLI: bandwidth, Mbps" },
+      latencyMs: { type: "int", note: "attested SLI: latency, ms" },
+      indexingPct: { type: "int", note: "attested SLI: indexing, percent" },
+    },
+    indexes: ["providerId", "blockNumber"],
+  },
 }
