@@ -7,9 +7,22 @@ const configUrl = new URL("../ponder.config.ts", import.meta.url).href
 const inspectConfigScript = `
 const config = (await import(${JSON.stringify(configUrl)})).default
 const networkName = Object.keys(config.chains)[0]
+const rpc = config.chains[networkName].rpc
+const rpcValue = typeof rpc === "string"
+  ? rpc
+  : rpc({
+      chain: undefined,
+      pollingInterval: 4_000,
+      retryCount: 3,
+      timeout: 10_000,
+    }).config.timeout
 console.log(JSON.stringify({
   networkName,
-  chain: config.chains[networkName],
+  chain: {
+    id: config.chains[networkName].id,
+    pollingInterval: config.chains[networkName].pollingInterval,
+    rpc: rpcValue,
+  },
   database: config.database,
   fwss: {
     chain: config.contracts.FWSS.chain,
@@ -26,6 +39,7 @@ function loadConfig(environment: Record<string, string> = {}) {
   delete env.PONDER_STRICT_ENV
   delete env.DATABASE_URL
   delete env.RPC_URL
+  delete env.PONDER_RPC_TIMEOUT_MS
   Object.assign(env, environment)
 
   return spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", inspectConfigScript], {
@@ -143,7 +157,11 @@ test("actual Ponder config selects mainnet and calibnet from the environment", (
     const config = JSON.parse(result.stdout)
     assert.deepEqual(config, {
       networkName: expected.networkName,
-      chain: { id: expected.chainId, rpc: rpcUrl, pollingInterval: 30_000 },
+      chain: {
+        id: expected.chainId,
+        rpc: rpcUrl,
+        pollingInterval: 30_000,
+      },
       database: { kind: "postgres", connectionString: databaseUrl },
       fwss: {
         chain: expected.networkName,
@@ -152,5 +170,37 @@ test("actual Ponder config selects mainnet and calibnet from the environment", (
         includeTransactionReceipts: true,
       },
     })
+  }
+})
+
+test("actual Ponder config supports an RPC timeout override", () => {
+  const result = loadConfig({
+    PONDER_STRICT_ENV: "true",
+    PONDER_NETWORK: "mainnet",
+    DATABASE_URL: "postgres://noop:noop@localhost/noop",
+    RPC_URL: "http://localhost:1234/rpc/v1",
+    PONDER_RPC_TIMEOUT_MS: "120000",
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  const config = JSON.parse(result.stdout)
+  assert.equal(config.chain.rpc, 120_000)
+})
+
+test("actual Ponder config rejects invalid RPC timeouts", () => {
+  const baseEnvironment = {
+    PONDER_STRICT_ENV: "true",
+    PONDER_NETWORK: "mainnet",
+    DATABASE_URL: "postgres://noop:noop@localhost/noop",
+    RPC_URL: "http://localhost:1234/rpc/v1",
+  }
+
+  for (const value of ["invalid", "0", "1.5"]) {
+    const result = loadConfig({
+      ...baseEnvironment,
+      PONDER_RPC_TIMEOUT_MS: value,
+    })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /PONDER_RPC_TIMEOUT_MS must be a positive integer/)
   }
 })

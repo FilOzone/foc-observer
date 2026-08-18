@@ -1,4 +1,5 @@
 import { createConfig } from "ponder"
+import { http } from "viem"
 import { PDPVerifierAbi } from "./abis/PDPVerifier.ts"
 import { FilecoinWarmStorageServiceAbi } from "./abis/FilecoinWarmStorageService.ts"
 import { FilecoinPayV1Abi } from "./abis/FilecoinPayV1.ts"
@@ -11,6 +12,24 @@ const strictEnv = parseStrictEnv(process.env.PONDER_STRICT_ENV)
 const networkName = parseNetwork(process.env.PONDER_NETWORK, strictEnv)
 const network = NETWORKS[networkName]
 
+const configuredRpcTimeout = process.env.PONDER_RPC_TIMEOUT_MS
+const rpcTimeoutMs = Number(configuredRpcTimeout)
+
+if (
+  configuredRpcTimeout !== undefined &&
+  (!Number.isSafeInteger(rpcTimeoutMs) || rpcTimeoutMs <= 0)
+) {
+  throw new Error("PONDER_RPC_TIMEOUT_MS must be a positive integer")
+}
+
+function rpcTransport(rpcUrl: string) {
+  if (configuredRpcTimeout === undefined) return rpcUrl
+
+  const transport = http(rpcUrl)
+  return (opts: Parameters<typeof transport>[0]) =>
+    transport({ ...opts, timeout: rpcTimeoutMs })
+}
+
 export default createConfig({
   database: {
     kind: "postgres",
@@ -19,7 +38,7 @@ export default createConfig({
   chains: {
     [networkName]: {
       id: network.CHAIN_ID,
-      rpc: readEnv("RPC_URL", network.RPC_URL, strictEnv),
+      rpc: rpcTransport(readEnv("RPC_URL", network.RPC_URL, strictEnv)),
       pollingInterval: 30_000,
     },
   },
