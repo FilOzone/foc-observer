@@ -9,6 +9,8 @@
     // Ponder requires bundler resolution for virtual modules (ponder:registry, ponder:schema)
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "resolveJsonModule": true,
 
     "isolatedModules": true,
@@ -19,11 +21,5 @@
 
     "skipLibCheck": true
   },
-  "include": [
-    "src",
-    "ponder.config.calibnet.ts",
-    "ponder.config.mainnet.ts",
-    "ponder.schema.ts",
-    "ponder-env.d.ts"
-  ]
+  "include": ["src", "test", "ponder.config.ts", "ponder.schema.ts", "ponder-env.d.ts"]
 }

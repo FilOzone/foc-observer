@@ -134,6 +134,13 @@ cp .env.example .env
 docker compose up -d
 ```
 
+When upgrading to this unified configuration, rebuild the indexers before restarting them. The unified
+`ponder.config.ts` is baked into the indexer image, so mounting the updated source directories alone does not update it:
+
+```bash
+docker compose up -d --build ponder-calibnet ponder-mainnet
+```
+
 ### Configuration
 
 All configuration is via `.env`. Copy `.env.example` for a template.
@@ -219,7 +226,19 @@ npm test
 
 ### Indexer
 
-The Ponder indexer uses a [Filecoin-compatible fork](https://github.com/rvagg/filecoin-ponder) of Ponder. The Docker build clones this fork automatically.
+The Ponder indexer uses a [Filecoin-compatible fork](https://github.com/rvagg/filecoin-ponder) of Ponder. Set `PONDER_NETWORK` to `mainnet` or `calibnet`; the default is `mainnet` for local development. Set `PONDER_STRICT_ENV=true` to require `PONDER_NETWORK`, `DATABASE_URL`, and `RPC_URL`, as the Docker Compose services do.
+
+Useful commands:
+
+```bash
+cd indexer
+npm run dev:mainnet
+npm run dev:calibnet
+npm run codegen:mainnet
+npm run codegen:calibnet
+npm test
+npm run typecheck
+```
 
 To regenerate contract ABIs:
 
