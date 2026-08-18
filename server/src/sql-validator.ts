@@ -210,6 +210,8 @@ const ALLOWED_NODE_TYPES = new Set([
 const ALLOWED_FUNCTIONS = new Set([
   // Aggregates
   "count", "sum", "avg", "min", "max",
+  "stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop",
+  "percentile_cont", "percentile_disc", "mode", "corr", "covar_pop", "covar_samp",
   "array_agg", "string_agg", "bool_and", "bool_or",
   "json_agg", "jsonb_agg", "json_object_agg", "jsonb_object_agg",
 

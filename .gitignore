@@ -9,3 +9,4 @@ logs/
 server/src/system-context.ts
 server/src/schema-defs.ts
 server/src/table-metadata.ts
+server/ponder-env.d.ts

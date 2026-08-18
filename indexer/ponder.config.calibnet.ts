@@ -5,6 +5,10 @@ import { FilecoinPayV1Abi } from "./abis/FilecoinPayV1"
 import { ServiceProviderRegistryAbi } from "./abis/ServiceProviderRegistry"
 import { SessionKeyRegistryAbi } from "./abis/SessionKeyRegistry"
 import { FilBeamOperatorAbi } from "./abis/FilBeamOperator"
+import { PoRepMarketAbi } from "./abis/PoRepMarket"
+import { PoRepValidatorFactoryAbi } from "./abis/PoRepValidatorFactory"
+import { PoRepSPRegistryAbi } from "./abis/PoRepSPRegistry"
+import { PoRepSLIOracleAbi } from "./abis/PoRepSLIOracle"
 
 // Calibnet proxy addresses (deployed at v1.0.0, same addresses across UUPS upgrades)
 // Source: https://github.com/FilOzone/filecoin-services/blob/main/service_contracts/deployments.json
@@ -24,11 +28,21 @@ const CALIBNET = {
     "0xea6631b25ba4c9c9e285da25a03aa96acc921530", // v1.0.1
     "0x5991e4f9fcef4ae23959ee03638b4688a7e1ecff", // v1.0.2 (current)
   ],
+  // PoRep Market V1 deployment at calibnet block 3,648,217.
+  // Source: fidlabs/porep-market@8a20c1a deployments/calibnet/3648217.json.
+  // PoRep Market V2 is not indexed.
+  POREP_MARKET: "0x32B13b88b038652B3D48262DeCF003a1799345B0",
+  POREP_VALIDATOR_FACTORY: "0xB97628717A1455AEAB0f155563fF581d9B500ca4",
+  POREP_SP_REGISTRY: "0x5be8aFda370e0a438171c2994570C22A4dE7f779",
+  POREP_SLI_ORACLE: "0x24879927832AD22b66E129f2825da7408dC1f753",
 } as const
 
 // Snapshot floor is 3,090,000 (null round); start +2 so the parent is valid.
 // Captures FilecoinPay rail 1 (3,125,305) and PDPVerifier sets 1-48 (3,144,601 onward).
 const START_BLOCK = 3_090_002
+
+// PoRep Market V1 deployed at calibnet block 3,648,217.
+const POREP_START_BLOCK = 3_648_217
 
 export default createConfig({
   database: {
@@ -98,6 +112,34 @@ export default createConfig({
       chain: "calibnet",
       address: CALIBNET.FILBEAM_OPERATORS,
       startBlock: START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepMarket: {
+      abi: PoRepMarketAbi,
+      chain: "calibnet",
+      address: CALIBNET.POREP_MARKET,
+      startBlock: POREP_START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepValidatorFactory: {
+      abi: PoRepValidatorFactoryAbi,
+      chain: "calibnet",
+      address: CALIBNET.POREP_VALIDATOR_FACTORY,
+      startBlock: POREP_START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepSPRegistry: {
+      abi: PoRepSPRegistryAbi,
+      chain: "calibnet",
+      address: CALIBNET.POREP_SP_REGISTRY,
+      startBlock: POREP_START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepSLIOracle: {
+      abi: PoRepSLIOracleAbi,
+      chain: "calibnet",
+      address: CALIBNET.POREP_SLI_ORACLE,
+      startBlock: POREP_START_BLOCK,
       includeTransactionReceipts: true,
     },
   },
