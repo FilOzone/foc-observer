@@ -14,7 +14,7 @@ import {
   upgradeAnnounced,
   ownershipTransferred,
 } from "ponder:schema"
-import { decodePiece } from "./cid-utils.js"
+import { decodePackedPieces, decodePiece } from "./cid-utils.js"
 import { eventId, eventMeta } from "./event-utils.js"
 
 ponder.on("PDPVerifier:DataSetCreated", async ({ event, context }) => {
@@ -77,6 +77,21 @@ ponder.on("PDPVerifier:PiecesAdded", async ({ event, context }) => {
   await context.db
     .insert(pdpPiecesAdded)
     .values({ id: eventId(event), setId, pieceCount: pieceIds.length, pieces, ...eventMeta(event) })
+})
+
+ponder.on("PDPVerifier:PiecesAddedV2", async ({ event, context }) => {
+  const { setId, firstPieceId, pieceCids: pieceCidsRaw } = event.args
+
+  let pieces: string | null = null
+  try {
+    pieces = JSON.stringify(decodePackedPieces(firstPieceId, pieceCidsRaw))
+  } catch {
+    // Fall back to null if CID parsing fails
+  }
+
+  await context.db
+    .insert(pdpPiecesAdded)
+    .values({ id: eventId(event), setId, pieceCount: pieceCidsRaw.length, pieces, ...eventMeta(event) })
 })
 
 ponder.on("PDPVerifier:PiecesRemoved", async ({ event, context }) => {
