@@ -22,6 +22,29 @@ export function decodePiece(cidData: { data: `0x${string}` }): DecodedPiece {
   }
 }
 
+/** Reconstruct and decode a right-aligned packed CID emitted by PiecesAddedV2. */
+export function decodePackedPiece(packed: {
+  header: `0x${string}`
+  root: `0x${string}`
+}): DecodedPiece {
+  const header = packed.header.slice(2)
+  let offset = 0
+  while (offset < header.length && header.slice(offset, offset + 2) === "00") offset += 2
+
+  return decodePiece({ data: `0x${header.slice(offset)}${packed.root.slice(2)}` })
+}
+
+/** Decode a PiecesAddedV2 batch and derive its consecutive piece IDs. */
+export function decodePackedPieces(
+  firstPieceId: bigint,
+  packedCids: ReadonlyArray<{ header: `0x${string}`; root: `0x${string}` }>,
+) {
+  return packedCids.map((packed, i) => {
+    const decoded = decodePackedPiece(packed)
+    return { id: Number(firstPieceId + BigInt(i)), cid: decoded.cid, size: decoded.rawSize.toString() }
+  })
+}
+
 /** Decode just the CID string from contract bytes. */
 export function decodeCidString(cidData: { data: `0x${string}` }): string {
   const bytes = Uint8Array.from(Buffer.from(cidData.data.slice(2), "hex"))
