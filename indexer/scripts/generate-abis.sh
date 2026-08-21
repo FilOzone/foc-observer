@@ -68,6 +68,26 @@ fetch_abi() {
   return 1
 }
 
+# Merge event entries without duplicating signatures already present in the
+# contract ABI. Tuple component types are part of an event's canonical
+# signature, while parameter names and internalType are not.
+merge_events() {
+  local events="$1"
+  jq --argjson events "$events" '
+    def input_signature:
+      [.type, [(.components // [])[] | input_signature]];
+    def event_signature:
+      [.name, [.inputs[]? | input_signature]];
+    reduce $events[] as $event (.;
+      ($event | event_signature) as $signature
+      | if any(.[]; .type == "event" and event_signature == $signature)
+        then .
+        else . + [$event]
+        end
+    )
+  '
+}
+
 echo "fetching ABIs from ${REPO}@${REF}"
 
 for contract in "${CONTRACTS[@]}"; do
@@ -87,14 +107,18 @@ for contract in "${CONTRACTS[@]}"; do
         continue
       }
       lib_events=$(jq '[.[] | select(.type == "event")]' <<<"$lib_json")
-      abi_json=$(jq --argjson events "$lib_events" '. + $events' <<<"$abi_json")
-      spliced=$((spliced + $(jq 'length' <<<"$lib_events")))
+      before=$(jq 'length' <<<"$abi_json")
+      abi_json=$(merge_events "$lib_events" <<<"$abi_json")
+      after=$(jq 'length' <<<"$abi_json")
+      spliced=$((spliced + after - before))
     done
     # Hand-maintained extras (eg legacy events retained for older deployments).
     if [ -f "$FWSS_EXTRAS" ]; then
       extras=$(jq 'map(del(._comment))' "$FWSS_EXTRAS")
-      abi_json=$(jq --argjson extras "$extras" '. + $extras' <<<"$abi_json")
-      spliced=$((spliced + $(jq 'length' <<<"$extras")))
+      before=$(jq 'length' <<<"$abi_json")
+      abi_json=$(merge_events "$extras" <<<"$abi_json")
+      after=$(jq 'length' <<<"$abi_json")
+      spliced=$((spliced + after - before))
     fi
     echo "  ${contract} (+ ${spliced} spliced events)"
   else
