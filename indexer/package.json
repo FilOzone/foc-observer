@@ -20,7 +20,7 @@
     "hono": "^4.13",
     "multiformats": "^14",
     "ponder": "npm:@rvagg/ponder@0.16.6-filecoin.1",
-    "viem": "^2.55"
+    "viem": "^2.56"
   },
   "overrides": {
     "@hono/node-server": "^1.19.13",
@@ -30,7 +30,7 @@
     "vite": "^6.4.2"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.4.0",
     "typescript": "^7.0"
   }
 }
