@@ -3,7 +3,9 @@
 
 -- tx_meta and its index read Ponder's sync tables, which do not exist until the
 -- indexer's first run. Skip them on an unpopulated database rather than fail the
--- one-shot, which would block the server from starting at all.
+-- one-shot, which would block the server from starting at all. `docker compose
+-- up -d` re-runs the one-shot, so the view lands on the next deploy once Ponder
+-- has populated ponder_sync.
 DO $$
 BEGIN
   IF to_regclass('ponder_sync.transactions') IS NULL THEN

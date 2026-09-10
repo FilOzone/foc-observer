@@ -87,21 +87,6 @@ export class PonderClient {
     }
   }
 
-  /**
-   * Create or refresh the read-only views we expose in the public schema for
-   * agent queries. Called at server startup so the views always exist regardless
-   * of whether the underlying postgres volume is fresh or carried over from a
-   * previous indexing run.
-   *
-   * Tolerates the case where Ponder's internal sync tables don't exist yet
-   * (e.g. fresh DB, ponder hasn't booted) — the view will be created on the
-   * next server startup once Ponder has populated its schema.
-   *
-   * Currently exposes:
-   * - tx_meta: per-tx target/selector/gas, joined from ponder_sync.transactions
-   *   and ponder_sync.transaction_receipts. Allow-listed in sql-validator.ts.
-   */
-
   async querySql(rawSql: string): Promise<SqlResult> {
     // sql is normalized (trailing semicolons stripped) for the cursor wrapper.
     const { isExplain, sql } = validateSql(rawSql)

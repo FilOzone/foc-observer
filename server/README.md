@@ -48,7 +48,7 @@ All via environment variables. See `../.env.example` for the full list. Key vari
 
 - `FOC_SERVER_PORT`: HTTP port
 - `FOC_API_URL`: Public URL (used in agent context for dashboard examples)
-- `FOC_CALIBNET_DATABASE_URL` / `FOC_MAINNET_DATABASE_URL`: Owner connections used only for startup view maintenance
+- `FOC_CALIBNET_DATABASE_URL` / `FOC_MAINNET_DATABASE_URL`: Local development only, used as the query connection when no restricted URL is set
 - `FOC_CALIBNET_QUERY_DATABASE_URL` / `FOC_MAINNET_QUERY_DATABASE_URL`: Restricted connections used for every query
 - `FOC_CALIBNET_RPC_URL` / `FOC_MAINNET_RPC_URL`: Lotus RPC endpoints
 - `BETTERSTACK_CH_USER` / `BETTERSTACK_CH_PASSWORD`: Optional, enables DealBot metrics
