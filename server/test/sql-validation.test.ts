@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "vitest"
-import { initParser, validateSql } from "../src/sql-validator.js"
+import { MAX_SQL_LENGTH, initParser, validateSql } from "../src/sql-validator.js"
 
 beforeAll(async () => {
   await initParser()
@@ -374,5 +374,15 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
 
   test("blocks _reorg__ tables", () => {
     expect(() => validateSql("SELECT * FROM _reorg__fp_deposit")).toThrow(/not a known FOC event table/)
+  })
+
+  test("rejects oversized queries before parsing", () => {
+    const oversized = `SELECT * FROM fp_deposit WHERE id IN (${"1,".repeat(MAX_SQL_LENGTH)}1)`
+    expect(() => validateSql(oversized)).toThrow(/Query too long/)
+  })
+
+  test("accepts a query at the length limit", () => {
+    const padding = "-".repeat(MAX_SQL_LENGTH - "SELECT 1 ".length)
+    expect(() => validateSql(`SELECT 1 ${padding}`)).not.toThrow()
   })
 })

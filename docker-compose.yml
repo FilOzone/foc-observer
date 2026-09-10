@@ -44,6 +44,22 @@ services:
       retries: 10
     restart: unless-stopped
 
+  postgres-query-role:
+    image: postgres:18
+    depends_on:
+      postgres-calibnet:
+        condition: service_healthy
+      postgres-mainnet:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ponder
+      FOC_QUERY_DATABASE_PASSWORD: ${FOC_QUERY_DATABASE_PASSWORD:-foc-observer}
+    volumes:
+      - ./postgres/provision.sh:/usr/local/bin/provision:ro
+      - ./postgres/bootstrap.sql:/usr/local/share/foc/bootstrap.sql:ro
+    command: ["/usr/local/bin/provision", "postgres-calibnet", "postgres-mainnet"]
+    restart: "no"
+
   ponder-calibnet:
     build: indexer
     depends_on:
@@ -95,10 +111,8 @@ services:
       context: .
       dockerfile: server/Dockerfile
     depends_on:
-      postgres-calibnet:
-        condition: service_healthy
-      postgres-mainnet:
-        condition: service_healthy
+      postgres-query-role:
+        condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -106,9 +120,9 @@ services:
     environment:
       FOC_SERVER_PORT: ${FOC_SERVER_PORT:?}
       FOC_API_URL: ${FOC_API_URL:?}
-      FOC_CALIBNET_DATABASE_URL: postgres://ponder:ponder@postgres-calibnet:5432/ponder
+      FOC_CALIBNET_QUERY_DATABASE_URL: postgres://foc_observer_query:${FOC_QUERY_DATABASE_PASSWORD:-foc-observer}@postgres-calibnet:5432/ponder
       FOC_CALIBNET_RPC_URL: ${CALIBNET_RPC_URL:?}
-      FOC_MAINNET_DATABASE_URL: postgres://ponder:ponder@postgres-mainnet:5432/ponder
+      FOC_MAINNET_QUERY_DATABASE_URL: postgres://foc_observer_query:${FOC_QUERY_DATABASE_PASSWORD:-foc-observer}@postgres-mainnet:5432/ponder
       FOC_MAINNET_RPC_URL: ${MAINNET_RPC_URL:?}
       BETTERSTACK_CH_USER: ${BETTERSTACK_CH_USER:-}
       BETTERSTACK_CH_PASSWORD: ${BETTERSTACK_CH_PASSWORD:-}

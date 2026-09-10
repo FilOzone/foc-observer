@@ -70,20 +70,19 @@ app.on(["GET", "DELETE"], "/mcp", (c) =>
 
 await initParser()
 
-// Create read-only views in the public schema for agent queries. Idempotent
-// (CREATE OR REPLACE), so it's safe to re-run on every startup. Survives v2
-// reindexes — when the postgres volume is swapped, the view is recreated on
-// the next server boot.
-for (const client of ponderClients.values()) {
-  await client.bootstrapViews()
-}
-
 logStartup(PORT, ALL_NETWORKS, !!betterstack)
 console.log(`foc-observer server starting on port ${PORT}`)
 
 for (const [name, client] of ponderClients) {
   const config = client.network
-  console.log(`  ${name}: postgres=${config.databaseUrl.replace(/\/\/.*@/, "//***@")} rpc=${config.rpcUrl}`)
+  const dsn = config.queryDatabaseUrl.replace(/\/\/([^:@/]+):[^@]*@/, "//$1:***@")
+  console.log(`  ${name}: postgres=${dsn} rpc=${config.rpcUrl}`)
+  if (config.queryDatabaseUrl === config.databaseUrl) {
+    console.warn(
+      `  WARNING: ${name} queries run as the database owner. ` +
+        `Set FOC_${name.toUpperCase()}_QUERY_DATABASE_URL to the foc_observer_query role.`,
+    )
+  }
 }
 console.log(`  BetterStack: ${betterstack ? "configured" : "not configured (set BETTERSTACK_CH_USER/PASSWORD)"}`)
 if (process.env.FOC_LOG_PATH) console.log(`  Log file: ${process.env.FOC_LOG_PATH}`)

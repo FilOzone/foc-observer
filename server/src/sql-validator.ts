@@ -27,6 +27,13 @@ export async function initParser(): Promise<void> {
 export const MAX_ROWS = 10000
 
 /**
+ * Upper bound on query text handed to parseSync(). The parser is WASM running
+ * synchronously on the main thread with no internal time or size limit, so an
+ * oversized query stalls the server. Far above any legitimate analytical query.
+ */
+export const MAX_SQL_LENGTH = 50_000
+
+/**
  * Read-only views over Ponder's internal sync tables, exposed in the public
  * schema. These are NOT indexed event tables — they're derived views that
  * surface per-tx metadata (target contract, function selector, gas) for gas
@@ -49,6 +56,9 @@ export function validateSql(sql: string): { isExplain: boolean; sql: string } {
   // wrapper). Internal semicolons survive, so multi-statement is still caught.
   const cleaned = sql.replace(/^\uFEFF/, "").trim().replace(/\s*;+\s*$/, "")
   if (!cleaned) throw new Error("Empty query.")
+  if (cleaned.length > MAX_SQL_LENGTH) {
+    throw new Error(`Query too long: ${cleaned.length} characters, limit is ${MAX_SQL_LENGTH}.`)
+  }
 
   let ast: ReturnType<typeof parseSync>
   try {

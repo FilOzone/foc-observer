@@ -149,6 +149,7 @@ All configuration is via `.env`. Copy `.env.example` for a template.
 |----------|----------|-------------|
 | `FOC_API_URL` | Yes | Public URL of your deployment |
 | `FOC_SERVER_PORT` | Yes | HTTP server port |
+| `FOC_QUERY_DATABASE_PASSWORD` | No | Restricted Postgres query-role password (Compose default `foc-observer`) |
 | `CALIBNET_RPC_URL` | Yes | Calibnet Lotus RPC endpoint |
 | `MAINNET_RPC_URL` | Yes | Mainnet Lotus RPC endpoint |
 | `LOTUS_CALIBNET_HOST` | No | Local Lotus host for socat proxy (default 127.0.0.1) |
@@ -184,7 +185,7 @@ Internet
     --> foc-observer container
 
 Docker bridge network:
-  foc-observer  --> postgres-calibnet, postgres-mainnet  (indexed events)
+  foc-observer  --> postgres-calibnet, postgres-mainnet  (restricted read-only query role)
                 --> ponder-calibnet, ponder-mainnet      (indexers)
                 --> lotus-proxy                          (RPC, via bridge gateway)
 

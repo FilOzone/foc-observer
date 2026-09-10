@@ -28,7 +28,7 @@ export interface ColumnInfo {
 
 import { TABLES } from "./schema-defs.js"
 
-// Server-created views (bootstrapViews below), not in schema-defs TABLES.
+// Created by the provisioning one-shot (postgres/bootstrap.sql), not in schema-defs TABLES.
 const VIEW_DESCRIPTIONS: Record<string, string> = {
   tx_meta:
     "One row per transaction: tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector, status. Event tables carry only tx_hash; JOIN tx_meta USING (tx_hash) for sender/value/gas. Gas cost in FIL = gas_used * effective_gas_price / 1e18",
@@ -36,12 +36,12 @@ const VIEW_DESCRIPTIONS: Record<string, string> = {
 
 export class PonderClient {
   readonly network: NetworkConfig
-  private pool: pg.Pool
+  private queryPool: pg.Pool
 
   constructor(network: NetworkConfig) {
     this.network = network
-    this.pool = new pg.Pool({
-      connectionString: network.databaseUrl,
+    this.queryPool = new pg.Pool({
+      connectionString: network.queryDatabaseUrl,
       max: 12,
       statement_timeout: 30_000,
     })
@@ -54,7 +54,7 @@ export class PonderClient {
 
   /** Internal query with SqlResult shape, bypasses validation, for server-side use only. */
   async queryInternal(sql: string): Promise<SqlResult> {
-    const client = await this.pool.connect()
+    const client = await this.queryPool.connect()
     try {
       await client.query("BEGIN TRANSACTION READ ONLY")
       await client.query("SET LOCAL search_path TO public")
@@ -78,7 +78,7 @@ export class PonderClient {
 
   /** Internal query, bypasses validation, used by listTables/describeTable */
   private async queryRaw(sql: string): Promise<pg.QueryResult> {
-    const client = await this.pool.connect()
+    const client = await this.queryPool.connect()
     try {
       const result = await client.query(sql)
       return result
@@ -87,71 +87,11 @@ export class PonderClient {
     }
   }
 
-  /**
-   * Create or refresh the read-only views we expose in the public schema for
-   * agent queries. Called at server startup so the views always exist regardless
-   * of whether the underlying postgres volume is fresh or carried over from a
-   * previous indexing run.
-   *
-   * Tolerates the case where Ponder's internal sync tables don't exist yet
-   * (e.g. fresh DB, ponder hasn't booted) — the view will be created on the
-   * next server startup once Ponder has populated its schema.
-   *
-   * Currently exposes:
-   * - tx_meta: per-tx target/selector/gas, joined from ponder_sync.transactions
-   *   and ponder_sync.transaction_receipts. Allow-listed in sql-validator.ts.
-   */
-  async bootstrapViews(): Promise<void> {
-    // Hash index is the only entry point into tx_meta by tx_hash; ponder_sync
-    // tables are keyed (chain_id, block_number, transaction_index) and a JOIN
-    // by hash seq-scans millions of rows without it. USING hash: equality-only
-    // and far smaller than a btree over 66-char hex strings. ~10s to build on
-    // 15M rows, no-op after the first run.
-    const indexDdl = `
-      CREATE INDEX IF NOT EXISTS transactions_hash_hash_idx
-        ON ponder_sync.transactions USING hash (hash)
-    `
-    // CREATE OR REPLACE VIEW only permits appending columns, not reordering or
-    // renaming. New columns must go at the end of the SELECT list.
-    // Receipts and blocks join via the ponder_sync primary keys; only the
-    // transactions lookup needs the hash index above.
-    const viewDdl = `
-      CREATE OR REPLACE VIEW public.tx_meta AS
-      SELECT
-        t.hash                AS tx_hash,
-        t."to"                AS tx_to,
-        LEFT(t.input, 10)     AS tx_selector,
-        t."from"              AS tx_from,
-        t.value               AS tx_value,
-        t.block_number        AS block_number,
-        r.gas_used            AS gas_used,
-        r.effective_gas_price AS effective_gas_price,
-        r.status              AS status,
-        b.timestamp           AS timestamp
-      FROM ponder_sync.transactions t
-      JOIN ponder_sync.transaction_receipts r
-        ON r.chain_id = t.chain_id
-        AND r.block_number = t.block_number
-        AND r.transaction_index = t.transaction_index
-      JOIN ponder_sync.blocks b
-        ON b.chain_id = t.chain_id AND b.number = t.block_number
-    `
-    try {
-      await this.queryRaw(indexDdl)
-      await this.queryRaw(viewDdl)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      // Not fatal — Ponder may not have created its sync tables yet on a fresh
-      // volume. The view will get created on the next server restart.
-      console.warn(`[bootstrap-views] ${this.network.name}: skipped tx_meta (${msg})`)
-    }
-  }
-
   async querySql(rawSql: string): Promise<SqlResult> {
     // sql is normalized (trailing semicolons stripped) for the cursor wrapper.
     const { isExplain, sql } = validateSql(rawSql)
 
-    const client = await this.pool.connect()
+    const client = await this.queryPool.connect()
     try {
       await client.query("BEGIN TRANSACTION READ ONLY")
       await client.query("SET LOCAL search_path TO public")
@@ -243,7 +183,7 @@ export class PonderClient {
   }
 
   async describeTable(tableName: string): Promise<ColumnInfo[]> {
-    const result = await this.pool.query(
+    const result = await this.queryPool.query(
       `SELECT column_name, data_type, is_nullable
        FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = $1
@@ -286,6 +226,6 @@ export class PonderClient {
   }
 
   async close(): Promise<void> {
-    await this.pool.end()
+    await this.queryPool.end()
   }
 }
