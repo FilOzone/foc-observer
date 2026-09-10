@@ -23,15 +23,18 @@ export function sqlNotices(sql: string, result: SqlResult): string[] {
   }
 
   // -- Per-token decimals: a fixed /1e18 zeroes 6-decimal axlUSDC --
+  // Only FilecoinPay amounts carry a token dimension. tx_meta gas is always FIL
+  // and /1e18 is its correct scaling, so gas-only queries must stay quiet.
+  const touchesPayments = /\bfp_[a-z_]+/.test(q)
   const dividesBy1e18 = /\/\s*1e18\b/.test(q) || /\/\s*1_?0{18}\b/.test(q)
   const sumsAmount =
     /\bsum\s*\(/.test(q) && /(amount|net_payee|network_fee|operator_commission|value|price)/.test(q)
   const mentionsToken = /\btoken\b/.test(q)
-  if (dividesBy1e18) {
+  if (touchesPayments && dividesBy1e18) {
     notices.push(
       "Decimals are per-token: axlUSDC = 6 (1e6), USDFC/FIL = 18 (1e18). A fixed /1e18 collapses axlUSDC value to ~0. JOIN fp_rail_created.token and scale each token by its own decimals.",
     )
-  } else if (sumsAmount && !mentionsToken) {
+  } else if (touchesPayments && sumsAmount && !mentionsToken) {
     notices.push(
       "Summing amounts without GROUP BY token mixes 6-decimal (axlUSDC) and 18-decimal (USDFC/FIL) values. Scale per token before summing.",
     )

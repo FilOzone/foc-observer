@@ -543,7 +543,7 @@ Three places to get fault/proving data:
 
 ## Aggregate FilecoinPay Metrics (network-wide, all operators)
 
-CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables, which only capture FWSS-operated rails and miss every other operator (FWSS, Storacha [wound down], PoRep Market, and occasional one-offs). Operator shares shift; compute them per question (Revenue by operator).
+CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables, which only capture FWSS-operated rails and miss every other operator on FilecoinPay (Storacha [wound down], PoRep Market, and occasional one-offs). Operator shares shift; compute them per question (Revenue by operator).
 
 **Total revenue (per token)**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY rc.token; divide each token's SUM(total_net_payee_amount::numeric) by its decimals (USDFC/FIL 1e18, axlUSDC 1e6).
 **Two payment channels - total volume is BOTH**: also SUM fp_one_time_payment (no gross column; gross = net_payee_amount+network_fee+operator_commission), scaled per-token. One-time often exceeds streaming, so never quote total volume from fp_rail_settled alone.

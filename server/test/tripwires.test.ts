@@ -52,6 +52,30 @@ describe("sqlNotices tripwires", () => {
     expect(has(n, "spans multiple tokens")).toBe(false)
   })
 
+  test("per-token: the documented tx_meta gas recipe stays quiet", () => {
+    const n = sqlNotices(
+      "SELECT tx_hash, gas_used * effective_gas_price / 1e18 AS fil FROM tx_meta ORDER BY fil DESC LIMIT 10",
+      empty,
+    )
+    expect(n).toHaveLength(0)
+  })
+
+  test("per-token: SUM over gas without payments data stays quiet", () => {
+    const n = sqlNotices(
+      "SELECT SUM(gas_used * effective_gas_price) FROM tx_meta WHERE block_number > 6000000",
+      empty,
+    )
+    expect(n).toHaveLength(0)
+  })
+
+  test("per-token: gas scaling alongside payments data still warns", () => {
+    const n = sqlNotices(
+      "SELECT SUM(s.total_settled_amount)/1e18 FROM fp_rail_settled s JOIN tx_meta m USING (tx_hash)",
+      empty,
+    )
+    expect(has(n, "collapses axlUSDC")).toBe(true)
+  })
+
   test("clean analytical query produces no notices", () => {
     const n = sqlNotices("SELECT provider_id, COUNT(*) FROM fwss_data_set_created GROUP BY provider_id", empty)
     expect(n).toHaveLength(0)
