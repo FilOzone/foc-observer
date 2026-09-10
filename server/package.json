@@ -12,17 +12,17 @@
     "test:live": "LIVE_TEST=1 vitest run"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.12",
+    "@hono/node-server": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "hono": "^4",
     "libpg-query": "^17.7.3",
-    "pg": "^8.22.0",
-    "viem": "^2.55.10",
-    "zod": "^4.4.3"
+    "pg": "^8.23.0",
+    "viem": "^2.56.3",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "@types/pg": "^8.18.0",
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
