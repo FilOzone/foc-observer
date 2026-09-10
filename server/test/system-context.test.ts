@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import { INSTRUCTIONS, SYSTEM_CONTEXT } from "../src/system-context.js"
+import { formatTableList } from "../src/table-metadata.js"
 
 /**
  * Claude Code (and similar MCP clients) cap individual tool result sizes.
@@ -24,6 +25,13 @@ const SYSTEM_CONTEXT_MAX_CHARS = Math.floor(TOKEN_LIMIT * CHARS_PER_TOKEN * SAFE
 // modest. No published Claude Code limit, so this is a sensibility check.
 const INSTRUCTIONS_MAX_CHARS = 15_000
 
+// formatTableList() builds the query_sql tool description from every table's
+// description, so it too is loaded into every MCP session. This cap (~7k
+// tokens) is a growth tripwire, not a client limit: adding tables should be a
+// conscious decision, not a silent drift in per-session overhead.
+// Roughly one more service's worth of tables above today's ~18.5k; raise deliberately.
+const TABLE_LIST_MAX_CHARS = 22_000
+
 describe("system-context size budget", () => {
   test(`SYSTEM_CONTEXT is under ${SYSTEM_CONTEXT_MAX_CHARS} chars (~${TOKEN_LIMIT} token MCP cap with ${Math.round((1 - SAFETY_MARGIN) * 100)}% headroom)`, () => {
     const len = SYSTEM_CONTEXT.length
@@ -40,5 +48,13 @@ describe("system-context size budget", () => {
       len,
       `INSTRUCTIONS is ${len} chars. Loaded into every MCP session; keep it lean.`,
     ).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS)
+  })
+
+  test(`query_sql table list is under ${TABLE_LIST_MAX_CHARS} chars`, () => {
+    const len = formatTableList().length
+    expect(
+      len,
+      `formatTableList() is ${len} chars (~${Math.ceil(len / CHARS_PER_TOKEN)} tokens). Loaded into every MCP session; trim table descriptions or raise the cap deliberately.`,
+    ).toBeLessThanOrEqual(TABLE_LIST_MAX_CHARS)
   })
 })

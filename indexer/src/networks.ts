@@ -15,6 +15,12 @@ type Network = {
   SESSION_KEY_REGISTRY: `0x${string}`
   STORACHA_FWSS: `0x${string}`
   FILBEAM_OPERATORS: readonly `0x${string}`[]
+  // PoRep Market (fidlabs cold storage): a separate service on the shared FilecoinPay.
+  POREP_MARKET: `0x${string}`
+  POREP_VALIDATOR_FACTORY: `0x${string}`
+  POREP_SP_REGISTRY: `0x${string}`
+  POREP_SLI_ORACLE: `0x${string}`
+  POREP_START_BLOCK: number
 }
 
 // Proxy addresses are stable across UUPS upgrades.
@@ -41,6 +47,13 @@ export const MAINNET = {
     "0xea6631b25ba4c9c9e285da25a03aa96acc921530", // v1.0.1
     "0x9e90749d298c4ca43bb468ca859dfe167f9cdcf2", // v1.0.2 (current)
   ],
+  // PoRep Market V1; source: fidlabs/porep-market@8a20c1a deployments/mainnet/latest.json.
+  POREP_MARKET: "0xBD669aBd1188F52e82aF114E17aCE2842DCc0Eb4",
+  POREP_VALIDATOR_FACTORY: "0x1814d77CDef6297e9E015667d912aE11ae6f68D8",
+  POREP_SP_REGISTRY: "0x504cF6660109fBa811d7e928Cb9d2d87cBa799d9",
+  POREP_SLI_ORACLE: "0x09c513F1C68d74b69a9550745BB779F346556577",
+  // Deployment block, ~700k after START_BLOCK; PoRep entries start here to skip the empty history.
+  POREP_START_BLOCK: 5_934_189,
 } as const satisfies Network
 
 export const CALIBNET = {
@@ -67,6 +80,13 @@ export const CALIBNET = {
     "0xea6631b25ba4c9c9e285da25a03aa96acc921530", // v1.0.1
     "0x5991e4f9fcef4ae23959ee03638b4688a7e1ecff", // v1.0.2 (current)
   ],
+  // PoRep Market V1; source: fidlabs/porep-market@8a20c1a deployments/calibnet/3648217.json. V2 is not indexed.
+  POREP_MARKET: "0x32B13b88b038652B3D48262DeCF003a1799345B0",
+  POREP_VALIDATOR_FACTORY: "0xB97628717A1455AEAB0f155563fF581d9B500ca4",
+  POREP_SP_REGISTRY: "0x5be8aFda370e0a438171c2994570C22A4dE7f779",
+  POREP_SLI_ORACLE: "0x24879927832AD22b66E129f2825da7408dC1f753",
+  // Deployment block; PoRep entries start here.
+  POREP_START_BLOCK: 3_648_217,
 } as const satisfies Network
 
 export const NETWORKS = {

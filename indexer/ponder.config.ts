@@ -6,6 +6,10 @@ import { FilecoinPayV1Abi } from "./abis/FilecoinPayV1.ts"
 import { ServiceProviderRegistryAbi } from "./abis/ServiceProviderRegistry.ts"
 import { SessionKeyRegistryAbi } from "./abis/SessionKeyRegistry.ts"
 import { FilBeamOperatorAbi } from "./abis/FilBeamOperator.ts"
+import { PoRepMarketAbi } from "./abis/PoRepMarket.ts"
+import { PoRepValidatorFactoryAbi } from "./abis/PoRepValidatorFactory.ts"
+import { PoRepSPRegistryAbi } from "./abis/PoRepSPRegistry.ts"
+import { PoRepSLIOracleAbi } from "./abis/PoRepSLIOracle.ts"
 import { NETWORKS, parseNetwork, parseStrictEnv, readEnv } from "./src/networks.ts"
 
 const strictEnv = parseStrictEnv(process.env.PONDER_STRICT_ENV)
@@ -114,6 +118,35 @@ export default createConfig({
       chain: networkName,
       address: network.FILBEAM_OPERATORS,
       startBlock: network.START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    // PoRep Market contracts start at their own deployment block, not START_BLOCK.
+    PoRepMarket: {
+      abi: PoRepMarketAbi,
+      chain: networkName,
+      address: network.POREP_MARKET,
+      startBlock: network.POREP_START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepValidatorFactory: {
+      abi: PoRepValidatorFactoryAbi,
+      chain: networkName,
+      address: network.POREP_VALIDATOR_FACTORY,
+      startBlock: network.POREP_START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepSPRegistry: {
+      abi: PoRepSPRegistryAbi,
+      chain: networkName,
+      address: network.POREP_SP_REGISTRY,
+      startBlock: network.POREP_START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    PoRepSLIOracle: {
+      abi: PoRepSLIOracleAbi,
+      chain: networkName,
+      address: network.POREP_SLI_ORACLE,
+      startBlock: network.POREP_START_BLOCK,
       includeTransactionReceipts: true,
     },
   },
