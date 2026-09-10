@@ -543,14 +543,14 @@ Three places to get fault/proving data:
 
 ## Aggregate FilecoinPay Metrics (network-wide, all operators)
 
-CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables, since that only captures FWSS-operated rails and misses other operators like Storacha (which accounts for ~74% of mainnet settlement volume).
+CRITICAL: For network-wide metrics, start from fp_* tables. Do NOT join to fwss_* tables, which only capture FWSS-operated rails and miss every other operator on FilecoinPay (Storacha [wound down], PoRep Market, and occasional one-offs). Operator shares shift; compute them per question (Revenue by operator).
 
-**Total revenue**: SUM(total_net_payee_amount::numeric)/1e18 FROM fp_rail_settled. This is all USDFC paid to all SPs across all operators.
-**Total revenue including one-time payments**: Add SUM(net_payee_amount::numeric)/1e18 FROM fp_one_time_payment.
-**ARR (Annual Recurring Revenue)**: Use fp_rail_rate_modified (NOT fwss_rail_rate_updated which is FWSS-only). For active non-terminated non-finalized rails: SUM the latest new_rate per rail_id, multiply by epochs_per_year (2880 * 365). Or query live rail state via get_rail for each active rail.
-**Revenue by operator**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY operator. This shows FWSS vs Storacha vs other operators.
-**Revenue by SP**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY payee. Each payee is an SP address.
-**Deposits/TVL**: fp_deposit and fp_withdrawal directly, no FWSS join needed.
+**Total revenue (per token)**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY rc.token; divide each token's SUM(total_net_payee_amount::numeric) by its decimals (USDFC/FIL 1e18, axlUSDC 1e6).
+**Two payment channels - total volume is BOTH**: also SUM fp_one_time_payment (no gross column; gross = net_payee_amount+network_fee+operator_commission), scaled per-token. One-time often exceeds streaming, so never quote total volume from fp_rail_settled alone.
+**ARR (Annual Recurring Revenue)**: Use fp_rail_rate_modified (NOT fwss_rail_rate_updated which is FWSS-only). For active non-terminated non-finalized rails: SUM the latest new_rate per rail_id, multiply by epochs_per_year (2880 * 365), per token. Or query live rail state via get_rail.
+**Revenue by operator**: JOIN fp_rail_settled to fp_rail_created on rail_id, GROUP BY operator, token.
+**Revenue by SP**: same JOIN, GROUP BY payee, token. Each payee is an SP address.
+**Deposits/TVL**: fp_deposit and fp_withdrawal directly, GROUP BY token, no FWSS join needed.
 
 Known operators on mainnet:
 - FWSS: 0x8408502033c418e1bbc97ce9ac48e5528f371a9f
@@ -649,7 +649,7 @@ For gas analysis: JOIN your event table to tx_meta USING (tx_hash). Piece count 
 
 **Total data stored**: SUM(raw_size) from fwss_piece_added gives total bytes of original (unpadded) data. Divide by 1e12 for TiB. Filter by provider via JOIN with fwss_data_set_created. Exclude terminated datasets by LEFT JOIN with fwss_service_terminated and filtering WHERE terminated IS NULL.
 
-**Total revenue**: SUM(total_net_payee_amount) / 1e18 from fp_rail_settled gives all-time USDFC paid to SPs. Join with fwss_data_set_created via pdp_rail_id for per-provider breakdown. Remember: these fields are INCREMENTAL per event, so SUM() is correct.
+**Total revenue**: use the two-channel, per-token recipe in Aggregate FilecoinPay Metrics (fp_rail_settled + fp_one_time_payment; scale by token decimals). Join fwss_data_set_created via pdp_rail_id for per-FWSS-provider breakdown. Fields are INCREMENTAL per event, so SUM() is correct.
 
 **Time filtering**: Use timestamp column (unix seconds). Last 7 days: WHERE timestamp > EXTRACT(EPOCH FROM NOW()) - 7*86400. By date: WHERE TO_TIMESTAMP(timestamp) >= '2026-03-01'. By epoch: WHERE block_number > 5860000.
 
