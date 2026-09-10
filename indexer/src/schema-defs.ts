@@ -95,6 +95,16 @@ export const TABLES: Record<string, TableDef> = {
     },
     indexes: ["setId", "blockNumber"],
   },
+  pdp_pieces_scheduled_for_removal: {
+    description:
+      "Pieces queued for removal by schedulePieceDeletions; the SP must then call processPieceDeletions to apply them, which emits the matching pdp_pieces_removed row. nextProvingPeriod reverts while the queue is non-empty. Batches at 100 piece ids, so one call can emit several rows. PDPVerifier v3.5.0+",
+    columns: {
+      setId: { type: "bigint" },
+      pieceCount: { type: "int" },
+      pieceIds: { type: "text", nullable: true, note: "JSON [int]" },
+    },
+    indexes: ["setId", "blockNumber"],
+  },
   pdp_storage_provider_changed: {
     description: "Dataset transferred to new SP",
     columns: {
@@ -211,6 +221,15 @@ export const TABLES: Record<string, TableDef> = {
       dataSetId: { type: "bigint" },
       oldServiceProvider: { type: "hex" },
       newServiceProvider: { type: "hex" },
+    },
+    indexes: ["dataSetId"],
+  },
+  fwss_data_set_authorizer_set: {
+    description:
+      "Optional authorizer contract for a dataset. When set it is the sole authorization gate for addPieces, schedulePieceRemovals and signed terminateService, and the recorded approver is always the payer; the zero address restores default payer-or-session-key EIP-712 auth. Payer-only to set. Last row per data_set_id wins, but dataset cleanup clears it without emitting. FWSS v1.4.0+",
+    columns: {
+      dataSetId: { type: "bigint" },
+      authorizer: { type: "hex" },
     },
     indexes: ["dataSetId"],
   },

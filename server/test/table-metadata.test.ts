@@ -1,9 +1,9 @@
 /**
  * Validates table metadata consistency and formatting.
  *
- * Since ponder.schema.ts and table-metadata.ts both import from
- * schema-defs.ts, there's no drift to detect, they share the
- * same source. This test validates the metadata is well-formed.
+ * table-metadata.ts and ponder.schema.ts both derive from schema-defs.ts, but
+ * ponder.schema.ts needs a hand-written export per table; indexer/test/schema-exports
+ * guards that pairing. This test validates the metadata itself is well-formed.
  */
 
 import { describe, expect, test } from "vitest"
