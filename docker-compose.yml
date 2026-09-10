@@ -73,7 +73,6 @@ services:
       DATABASE_URL: postgres://ponder:ponder@postgres-calibnet:5432/ponder
       RPC_URL: ${CALIBNET_RPC_URL:?}
       PORT: 17827
-      PONDER_EXPERIMENTAL_DB: platform
     # Writes tables to the named schema; auto-creates views in public so the
     # server queries unqualified table names. The active schema name is
     # deployment state, not code: set CALIBNET_DATA_SCHEMA in .env and bump it
@@ -98,7 +97,6 @@ services:
       DATABASE_URL: postgres://ponder:ponder@postgres-mainnet:5432/ponder
       RPC_URL: ${MAINNET_RPC_URL:?}
       PORT: 17828
-      PONDER_EXPERIMENTAL_DB: platform
     command: ["npm", "start", "--", "--schema", "${MAINNET_DATA_SCHEMA:-data_v1}", "--views-schema", "public"]
     restart: unless-stopped
     volumes:

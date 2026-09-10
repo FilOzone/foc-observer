@@ -767,7 +767,7 @@ export const TABLES: Record<string, TableDef> = {
   // per-deal Validator contract as the FilecoinPay operator. V1 events (V2 not indexed).
   // Bridge to payment data via porep_rail_id_updated.
   porep_deal_proposal_created: {
-    description: "PoRep Market deal proposed. client = payer, provider_id = SP Filecoin actor id (uint64), the four SLI columns are the deal's required thresholds, manifestHash = content id, totalDealSize in bytes. Price is recorded in porep_sp_price_updated. Bridge to the payment rail via porep_rail_id_updated.rail_id -> fp_rail_created.rail_id",
+    description: "PoRep Market deal proposed. client = payer, provider_id = SP Filecoin actor id (uint64), the four SLI columns are the deal's required thresholds, totalDealSize in bytes. Price is recorded in porep_sp_price_updated. Bridge to the payment rail via porep_rail_id_updated.rail_id -> fp_rail_created.rail_id",
     columns: {
       dealId: { type: "bigint" },
       client: { type: "hex", note: "payer address" },
@@ -777,7 +777,6 @@ export const TABLES: Record<string, TableDef> = {
       latencyMs: { type: "int", note: "required SLI: latency, ms" },
       indexingPct: { type: "int", note: "required SLI: indexing, percent" },
       manifestLocation: { type: "text" },
-      manifestHash: { type: "hex", note: "bytes32 content-addressed deal data hash" },
       totalDealSize: { type: "bigint", note: "bytes" },
       proposedAtBlock: { type: "bigint" },
     },

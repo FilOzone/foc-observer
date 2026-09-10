@@ -33,9 +33,9 @@ test("PoRepMarket ABI decodes DealProposalCreated requirements as numbers", () =
   const data = encodeAbiParameters(
     [
       { type: "tuple", components: [{ name: "retrievabilityBps", type: "uint16" }, { name: "bandwidthMbps", type: "uint16" }, { name: "latencyMs", type: "uint16" }, { name: "indexingPct", type: "uint8" }] },
-      { type: "string" }, { type: "bytes32" }, { type: "uint256" }, { type: "uint256" },
+      { type: "string" }, { type: "uint256" }, { type: "uint256" },
     ],
-    [{ retrievabilityBps: 9500, bandwidthMbps: 100, latencyMs: 250, indexingPct: 80 }, "ipfs://manifest", hex(`0x${"11".repeat(32)}`), 1024n, 5_934_202n],
+    [{ retrievabilityBps: 9500, bandwidthMbps: 100, latencyMs: 250, indexingPct: 80 }, "ipfs://manifest", 1024n, 5_934_202n],
   )
   const d = decodeEventLog({ abi: PoRepMarketAbi, data, topics: [t0, t1, t2, t3] })
   assert.equal(d.eventName, "DealProposalCreated")
@@ -43,4 +43,7 @@ test("PoRepMarket ABI decodes DealProposalCreated requirements as numbers", () =
   assert.equal(typeof d.args.requirements.retrievabilityBps, "number")
   assert.equal(d.args.requirements.retrievabilityBps, 9500)
   assert.equal(d.args.manifestLocation, "ipfs://manifest")
+  // Pin the tail: the deployed event has no manifestHash, so these follow the string directly.
+  assert.equal(d.args.totalDealSize, 1024n)
+  assert.equal(d.args.proposedAtBlock, 5_934_202n)
 })

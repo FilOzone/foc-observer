@@ -44,6 +44,8 @@ export default createConfig({
       id: network.CHAIN_ID,
       rpc: rpcTransport(readEnv("RPC_URL", network.RPC_URL, strictEnv)),
       pollingInterval: 30_000,
+      // Lotus caps eth_getLogs at 2880 blocks per request and rejects larger ranges outright.
+      ethGetLogsBlockRange: 2880,
     },
   },
   accounts: {
