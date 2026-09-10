@@ -5,6 +5,10 @@ import { FilecoinWarmStorageServiceAbi } from "../abis/FilecoinWarmStorageServic
 import { PDPVerifierAbi } from "../abis/PDPVerifier.ts"
 import { ServiceProviderRegistryAbi } from "../abis/ServiceProviderRegistry.ts"
 import { SessionKeyRegistryAbi } from "../abis/SessionKeyRegistry.ts"
+import { PoRepMarketAbi } from "../abis/PoRepMarket.ts"
+import { PoRepValidatorFactoryAbi } from "../abis/PoRepValidatorFactory.ts"
+import { PoRepSPRegistryAbi } from "../abis/PoRepSPRegistry.ts"
+import { PoRepSLIOracleAbi } from "../abis/PoRepSLIOracle.ts"
 
 type AbiInput = {
   type: string
@@ -23,6 +27,10 @@ const abis = {
   PDPVerifier: PDPVerifierAbi,
   ServiceProviderRegistry: ServiceProviderRegistryAbi,
   SessionKeyRegistry: SessionKeyRegistryAbi,
+  PoRepMarket: PoRepMarketAbi,
+  PoRepValidatorFactory: PoRepValidatorFactoryAbi,
+  PoRepSPRegistry: PoRepSPRegistryAbi,
+  PoRepSLIOracle: PoRepSLIOracleAbi,
 }
 
 function canonicalType(input: AbiInput): string {

@@ -12,7 +12,7 @@ Private HTTP API server and remote MCP endpoint for FOC observability. Not publi
 
 | Source | Connection | What it provides |
 |--------|-----------|------------------|
-| Postgres (calibnet + mainnet) | Bridge network | 43 indexed event tables from Ponder |
+| Postgres (calibnet + mainnet) | Bridge network | all indexed event tables from Ponder |
 | Lotus RPC (via socat proxy) | Bridge gateway | Live contract state (eth_call) |
 | BetterStack ClickHouse | HTTPS | DealBot deal/retrieval Prometheus metrics |
 | Goldsky subgraph | HTTPS | PDP proving health (authoritative, includes silent faults) |
