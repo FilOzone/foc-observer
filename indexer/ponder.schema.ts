@@ -60,6 +60,8 @@ for (const name of Object.keys(TABLES)) {
 }
 
 // Named exports matching the camelCase convention used by handlers
+export const txMeta = tables.tx_meta
+
 export const pdpDataSetCreated = tables.pdp_data_set_created
 export const pdpNextProvingPeriod = tables.pdp_next_proving_period
 export const pdpProofFeePaid = tables.pdp_proof_fee_paid

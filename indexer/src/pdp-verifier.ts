@@ -17,8 +17,10 @@ import {
 } from "ponder:schema"
 import { decodePackedPieces, decodePiece } from "./cid-utils.js"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 ponder.on("PDPVerifier:DataSetCreated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, storageProvider } = event.args
   await context.db
     .insert(pdpDataSetCreated)
@@ -26,6 +28,7 @@ ponder.on("PDPVerifier:DataSetCreated", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:NextProvingPeriod", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, challengeEpoch, leafCount } = event.args
   await context.db
     .insert(pdpNextProvingPeriod)
@@ -33,6 +36,7 @@ ponder.on("PDPVerifier:NextProvingPeriod", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:ProofFeePaid", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, fee } = event.args
   await context.db
     .insert(pdpProofFeePaid)
@@ -40,6 +44,7 @@ ponder.on("PDPVerifier:ProofFeePaid", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:PossessionProven", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, challenges } = event.args
 
   const challengeCount = challenges?.length ?? 0
@@ -56,6 +61,7 @@ ponder.on("PDPVerifier:PossessionProven", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:DataSetDeleted", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, deletedLeafCount } = event.args
   await context.db
     .insert(pdpDataSetDeleted)
@@ -63,6 +69,7 @@ ponder.on("PDPVerifier:DataSetDeleted", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:PiecesAdded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, pieceIds, pieceCids: pieceCidsRaw } = event.args
 
   let pieces: string | null = null
@@ -81,6 +88,7 @@ ponder.on("PDPVerifier:PiecesAdded", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:PiecesAddedV2", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, firstPieceId, pieceCids: pieceCidsRaw } = event.args
 
   let pieces: string | null = null
@@ -96,6 +104,7 @@ ponder.on("PDPVerifier:PiecesAddedV2", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:PiecesRemoved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, pieceIds } = event.args
   const pieceIdArr = pieceIds.length > 0 ? JSON.stringify(pieceIds.map((id: bigint) => Number(id))) : null
   await context.db
@@ -104,6 +113,7 @@ ponder.on("PDPVerifier:PiecesRemoved", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:PiecesScheduledForRemoval", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, pieceIds } = event.args
   const pieceIdArr = pieceIds.length > 0 ? JSON.stringify(pieceIds.map((id: bigint) => Number(id))) : null
   await context.db
@@ -112,6 +122,7 @@ ponder.on("PDPVerifier:PiecesScheduledForRemoval", async ({ event, context }) =>
 })
 
 ponder.on("PDPVerifier:StorageProviderChanged", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId, oldStorageProvider, newStorageProvider } = event.args
   await context.db
     .insert(pdpStorageProviderChanged)
@@ -119,6 +130,7 @@ ponder.on("PDPVerifier:StorageProviderChanged", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:DataSetEmpty", async ({ event, context }) => {
+  await recordTx(event, context)
   const { setId } = event.args
   await context.db
     .insert(pdpDataSetEmpty)
@@ -126,6 +138,7 @@ ponder.on("PDPVerifier:DataSetEmpty", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:FeeUpdateProposed", async ({ event, context }) => {
+  await recordTx(event, context)
   const { currentFee, newFee, effectiveTime } = event.args
   await context.db
     .insert(pdpFeeUpdateProposed)
@@ -133,6 +146,7 @@ ponder.on("PDPVerifier:FeeUpdateProposed", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:ContractUpgraded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { version, implementation } = event.args
   await context.db
     .insert(contractUpgraded)
@@ -140,6 +154,7 @@ ponder.on("PDPVerifier:ContractUpgraded", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:UpgradeAnnounced", async ({ event, context }) => {
+  await recordTx(event, context)
   const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
   await context.db
     .insert(upgradeAnnounced)
@@ -147,6 +162,7 @@ ponder.on("PDPVerifier:UpgradeAnnounced", async ({ event, context }) => {
 })
 
 ponder.on("PDPVerifier:OwnershipTransferred", async ({ event, context }) => {
+  await recordTx(event, context)
   const { previousOwner, newOwner } = event.args
   await context.db
     .insert(ownershipTransferred)

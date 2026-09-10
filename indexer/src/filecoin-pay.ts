@@ -13,8 +13,10 @@ import {
   fpRailLockupModified,
 } from "ponder:schema"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 ponder.on("FilecoinPay:RailCreated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId, payer, payee, token, operator, validator, serviceFeeRecipient, commissionRateBps } = event.args
   await context.db
     .insert(fpRailCreated)
@@ -22,6 +24,7 @@ ponder.on("FilecoinPay:RailCreated", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:RailSettled", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId, totalSettledAmount, totalNetPayeeAmount, operatorCommission, networkFee, settledUpTo } = event.args
   await context.db
     .insert(fpRailSettled)
@@ -33,6 +36,7 @@ ponder.on("FilecoinPay:RailSettled", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:RailTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId, by, endEpoch } = event.args
   await context.db
     .insert(fpRailTerminated)
@@ -40,6 +44,7 @@ ponder.on("FilecoinPay:RailTerminated", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:RailFinalized", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId } = event.args
   await context.db
     .insert(fpRailFinalized)
@@ -47,6 +52,7 @@ ponder.on("FilecoinPay:RailFinalized", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:DepositRecorded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { token, from, to, amount } = event.args
   await context.db
     .insert(fpDeposit)
@@ -54,6 +60,7 @@ ponder.on("FilecoinPay:DepositRecorded", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:WithdrawRecorded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { token, from, to, amount } = event.args
   await context.db
     .insert(fpWithdrawal)
@@ -61,6 +68,7 @@ ponder.on("FilecoinPay:WithdrawRecorded", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:RailRateModified", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId, oldRate, newRate } = event.args
   await context.db
     .insert(fpRailRateModified)
@@ -68,6 +76,7 @@ ponder.on("FilecoinPay:RailRateModified", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:OperatorApprovalUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { token, client, operator, approved, rateAllowance, lockupAllowance, maxLockupPeriod } = event.args
   await context.db
     .insert(fpOperatorApproval)
@@ -75,6 +84,7 @@ ponder.on("FilecoinPay:OperatorApprovalUpdated", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:RailOneTimePaymentProcessed", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId, netPayeeAmount, operatorCommission, networkFee } = event.args
   await context.db
     .insert(fpOneTimePayment)
@@ -82,6 +92,7 @@ ponder.on("FilecoinPay:RailOneTimePaymentProcessed", async ({ event, context }) 
 })
 
 ponder.on("FilecoinPay:AccountLockupSettled", async ({ event, context }) => {
+  await recordTx(event, context)
   const { token, owner, lockupCurrent, lockupRate, lockupLastSettledAt } = event.args
   await context.db
     .insert(fpAccountLockupSettled)
@@ -89,6 +100,7 @@ ponder.on("FilecoinPay:AccountLockupSettled", async ({ event, context }) => {
 })
 
 ponder.on("FilecoinPay:RailLockupModified", async ({ event, context }) => {
+  await recordTx(event, context)
   const { railId, oldLockupPeriod, newLockupPeriod, oldLockupFixed, newLockupFixed } = event.args
   await context.db
     .insert(fpRailLockupModified)

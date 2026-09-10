@@ -471,7 +471,7 @@ Interpretation: pre-~epoch 3,414,500 (calibnet) / 5,476,400 (mainnet) is v1.0.0;
 
 When explaining results to users, cite the source and any caveat:
 
-**Indexed events** (query_sql, list_tables, describe_table, get_status): Ponder writes one row per emitted event to Postgres with the join key tx_hash plus block context. Tx-level receipt fields (tx_from, tx_value, gas_used, effective_gas_price) live in the tx_meta view (one row per tx); join via tx_hash. Coverage: calibnet from epoch 3,155,000; mainnet from epoch 5,215,000. Limitation: only captures emitted events. Silent SPs produce no fault events. \`fp_burn_for_fees\` is indexed from tx input (no event).
+**Indexed events** (query_sql, list_tables, describe_table, get_status): Ponder writes one row per emitted event to Postgres with the join key tx_hash plus block context. Tx-level receipt fields (tx_from, tx_value, gas_used, effective_gas_price) live in tx_meta (one row per tx); join via tx_hash. Coverage: calibnet from epoch 3,155,000; mainnet from epoch 5,215,000. Limitation: only captures emitted events. Silent SPs produce no fault events. \`fp_burn_for_fees\` is indexed from tx input (no event).
 
 **Live state** (get_providers, get_provider, get_dataset, get_dataset_proving, get_rail, get_pricing, get_account, get_auction): direct eth_call via Lotus RPC. Always current block, no history. A finalized rail (settled + zeroed) reverts on getRail() by design.
 
@@ -729,7 +729,7 @@ Every event row carries only join keys and block context:
 - block_number: Filecoin epoch
 - timestamp: unix seconds
 
-Tx-level fields (tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector) live in the \`tx_meta\` view (one row per tx, sourced from ponder_sync). NOT duplicated on event rows. Every gas/sender/value query joins through tx_meta:
+Tx-level fields (tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector) live in the \`tx_meta\` table (one row per tx). NOT duplicated on event rows. Every gas/sender/value query joins through tx_meta:
 
 \`JOIN tx_meta m USING (tx_hash) ... SUM(m.gas_used*m.effective_gas_price)/1e18 AS fil\` for any aggregation; \`WHERE m.tx_from = '0x...'\` to filter by sender. When the query already joins two event tables (both have tx_hash), USING is ambiguous - use explicit \`JOIN tx_meta m ON m.tx_hash = <alias>.tx_hash\`.
 

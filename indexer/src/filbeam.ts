@@ -9,8 +9,10 @@ import {
   fbOwnershipTransferred,
 } from "ponder:schema"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 ponder.on("FilBeamOperator:UsageReported", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, fromEpoch, toEpoch, cdnBytesUsed, cacheMissBytesUsed } = event.args
   await context.db
     .insert(fbUsageReported)
@@ -23,6 +25,7 @@ ponder.on("FilBeamOperator:UsageReported", async ({ event, context }) => {
 })
 
 ponder.on("FilBeamOperator:CDNSettlement", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, cdnAmount } = event.args
   await context.db
     .insert(fbCdnSettlement)
@@ -35,6 +38,7 @@ ponder.on("FilBeamOperator:CDNSettlement", async ({ event, context }) => {
 })
 
 ponder.on("FilBeamOperator:CacheMissSettlement", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, cacheMissAmount } = event.args
   await context.db
     .insert(fbCacheMissSettlement)
@@ -47,6 +51,7 @@ ponder.on("FilBeamOperator:CacheMissSettlement", async ({ event, context }) => {
 })
 
 ponder.on("FilBeamOperator:PaymentRailsTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId } = event.args
   await context.db
     .insert(fbPaymentRailsTerminated)
@@ -59,6 +64,7 @@ ponder.on("FilBeamOperator:PaymentRailsTerminated", async ({ event, context }) =
 })
 
 ponder.on("FilBeamOperator:FilBeamControllerUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { oldController, newController } = event.args
   await context.db
     .insert(fbControllerUpdated)
@@ -71,6 +77,7 @@ ponder.on("FilBeamOperator:FilBeamControllerUpdated", async ({ event, context })
 })
 
 ponder.on("FilBeamOperator:FwssFilBeamControllerChanged", async ({ event, context }) => {
+  await recordTx(event, context)
   const { previousController, newController } = event.args
   await context.db
     .insert(fbFwssFilbeamControllerChanged)
@@ -83,6 +90,7 @@ ponder.on("FilBeamOperator:FwssFilBeamControllerChanged", async ({ event, contex
 })
 
 ponder.on("FilBeamOperator:OwnershipTransferred", async ({ event, context }) => {
+  await recordTx(event, context)
   const { previousOwner, newOwner } = event.args
   await context.db
     .insert(fbOwnershipTransferred)

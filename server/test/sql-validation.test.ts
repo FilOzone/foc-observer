@@ -36,6 +36,16 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("/* aggregation */ SELECT COUNT(*) FROM fp_deposit")).not.toThrow()
   })
 
+  test("allows tx_meta as a table", () => {
+    expect(() => validateSql("SELECT * FROM tx_meta")).not.toThrow()
+  })
+
+  test("allows joining tx_meta on tx_hash", () => {
+    expect(() =>
+      validateSql("SELECT s.rail_id, m.tx_from FROM fp_rail_settled s JOIN tx_meta m USING (tx_hash)"),
+    ).not.toThrow()
+  })
+
   test("allows string literals with special characters", () => {
     expect(() => validateSql("SELECT * FROM fwss_data_set_created WHERE source = 'foo;bar'")).not.toThrow()
   })
