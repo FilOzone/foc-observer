@@ -37,7 +37,7 @@ function sliColumns(t: {
 
 ponder.on("PoRepMarket:DealProposalCreated", async ({ event, context }) => {
   await recordTx(event, context)
-  const { dealId, client, provider, requirements, manifestLocation, manifestHash, totalDealSize, proposedAtBlock } =
+  const { dealId, client, provider, requirements, manifestLocation, totalDealSize, proposedAtBlock } =
     event.args
   await context.db.insert(porepDealProposalCreated).values({
     id: eventId(event),
@@ -46,7 +46,6 @@ ponder.on("PoRepMarket:DealProposalCreated", async ({ event, context }) => {
     providerId: provider,
     ...sliColumns(requirements),
     manifestLocation,
-    manifestHash,
     totalDealSize,
     proposedAtBlock,
     ...eventMeta(event),
