@@ -15,6 +15,7 @@ import { SubgraphClient } from "./subgraph-client.js"
 import { ProvingClient } from "./proving-client.js"
 import type { NetworkName } from "./networks.js"
 import { logRest, logSql } from "./logger.js"
+import { sqlNotices } from "./tripwires.js"
 
 interface Backends {
   ponderClients: Map<NetworkName, PonderClient>
@@ -84,7 +85,8 @@ export function createRoutes(backends: Backends): Hono {
     try {
       const result = await ctx.ponder.querySql(body.sql)
       logSql("rest", ctx.network, body.sql, Date.now() - sqlStart, { rowCount: result.rowCount })
-      return c.json({ network: ctx.network, ...result })
+      const notices = sqlNotices(body.sql, result)
+      return c.json({ network: ctx.network, ...result, ...(notices.length ? { notices } : {}) })
     } catch (err) {
       logSql("rest", ctx.network, body.sql, Date.now() - sqlStart, { error: sanitizeError(err) })
       return c.json({ network: ctx.network, error: sanitizeError(err) }, 400)

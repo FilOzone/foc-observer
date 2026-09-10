@@ -12,6 +12,7 @@ import type { PonderClient } from "./ponder-client.js"
 import type { ContractReader } from "./contract-reader.js"
 import { DealbotClient } from "./dealbot-client.js"
 import { formatTableList } from "./table-metadata.js"
+import { sqlNotices } from "./tripwires.js"
 import type { BetterStackClient } from "./betterstack-client.js"
 import type { SubgraphClient } from "./subgraph-client.js"
 import { ProvingClient } from "./proving-client.js"
@@ -120,14 +121,15 @@ Tables and key columns:
 ${formatTableList()}
 
 Key joins: fwss tables use data_set_id, pdp tables use set_id, these are the same value (JOIN fwss.data_set_id = pdp.set_id). rail_id across fp tables. Link rails to datasets: JOIN fwss_data_set_created.pdp_rail_id = fp_rail_settled.rail_id. Provider names: call get_providers first, then JOIN by provider_id.
-Amounts are bigint (18 decimals). Gas cost in FIL = m.gas_used * m.effective_gas_price / 1e18 (m being tx_meta).`,
+Amounts are bigint but decimals are PER-TOKEN: USDFC/FIL = 18 (1e18), axlUSDC = 6 (1e6). JOIN fp_rail_created.token and scale per token; never divide a mixed-token SUM by a fixed 1e18. Gas in FIL = m.gas_used * m.effective_gas_price / 1e18 (m = tx_meta).`,
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, sql: z.string().describe("SQL SELECT query to execute") },
   }, logged("query_sql", async ({ network, sql }) => {
     const sqlStart = Date.now()
     try {
       const result = await getPonder(network).querySql(sql)
       logSql("mcp", network, sql, Date.now() - sqlStart, { rowCount: result.rowCount })
-      return toolResult({ network, ...result })
+      const notices = sqlNotices(sql, result)
+      return toolResult({ network, ...result, ...(notices.length ? { notices } : {}) })
     } catch (err) {
       logSql("mcp", network, sql, Date.now() - sqlStart, { error: sanitizeError(err) })
       return toolError(err)
