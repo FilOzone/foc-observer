@@ -22,8 +22,10 @@ import {
 } from "ponder:schema"
 import { decodePiece } from "./cid-utils.js"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 ponder.on("StorachaFWSS:DataSetCreated", async ({ event, context }) => {
+  await recordTx(event, context)
   const {
     dataSetId, providerId, pdpRailId, cacheMissRailId, cdnRailId,
     payer, serviceProvider, payee, metadataKeys, metadataValues,
@@ -50,6 +52,7 @@ ponder.on("StorachaFWSS:DataSetCreated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:PieceAdded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, pieceId, pieceCid: pieceCidRaw, keys, values } = event.args
 
   let pieceCid = pieceCidRaw.data as string
@@ -81,6 +84,7 @@ ponder.on("StorachaFWSS:PieceAdded", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:FaultRecord", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, periodsFaulted, deadline } = event.args
   await context.db
     .insert(storachaFwssFaultRecord)
@@ -88,6 +92,7 @@ ponder.on("StorachaFWSS:FaultRecord", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:RailRateUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, railId, newRate } = event.args
   await context.db
     .insert(storachaFwssRailRateUpdated)
@@ -95,6 +100,7 @@ ponder.on("StorachaFWSS:RailRateUpdated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:ServiceTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   // Storacha tracks v1.2.x: on-chain semantic is the tx sender. The shared ABI
   // types the field as `approver` (v1.3.0 name) — wire format is identical.
   const { approver, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
@@ -108,6 +114,7 @@ ponder.on("StorachaFWSS:ServiceTerminated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:PricingUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { storagePrice, minimumRate } = event.args
   await context.db
     .insert(storachaFwssPricingUpdated)
@@ -115,6 +122,7 @@ ponder.on("StorachaFWSS:PricingUpdated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:ProviderApproved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId } = event.args
   await context.db
     .insert(storachaFwssProviderApproved)
@@ -122,6 +130,7 @@ ponder.on("StorachaFWSS:ProviderApproved", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:ProviderUnapproved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId } = event.args
   await context.db
     .insert(storachaFwssProviderUnapproved)
@@ -129,6 +138,7 @@ ponder.on("StorachaFWSS:ProviderUnapproved", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, oldServiceProvider, newServiceProvider } = event.args
   await context.db
     .insert(storachaFwssDataSetSpChanged)
@@ -136,6 +146,7 @@ ponder.on("StorachaFWSS:DataSetServiceProviderChanged", async ({ event, context 
 })
 
 ponder.on("StorachaFWSS:PDPPaymentTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, endEpoch, pdpRailId } = event.args
   await context.db
     .insert(storachaFwssPdpPaymentTerminated)
@@ -143,6 +154,7 @@ ponder.on("StorachaFWSS:PDPPaymentTerminated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:CDNPaymentTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, endEpoch, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(storachaFwssCdnPaymentTerminated)
@@ -150,6 +162,7 @@ ponder.on("StorachaFWSS:CDNPaymentTerminated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:CDNServiceTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { caller, dataSetId, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(storachaFwssCdnServiceTerminated)
@@ -157,6 +170,7 @@ ponder.on("StorachaFWSS:CDNServiceTerminated", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, cdnAmountAdded, totalCdnLockup, cacheMissAmountAdded, totalCacheMissLockup } = event.args
   await context.db
     .insert(storachaFwssCdnRailsToppedUp)
@@ -168,6 +182,7 @@ ponder.on("StorachaFWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => 
 })
 
 ponder.on("StorachaFWSS:ContractUpgraded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { version, implementation } = event.args
   await context.db
     .insert(storachaFwssContractUpgraded)
@@ -175,6 +190,7 @@ ponder.on("StorachaFWSS:ContractUpgraded", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:FilecoinServiceDeployed", async ({ event, context }) => {
+  await recordTx(event, context)
   const { name, description } = event.args
   await context.db
     .insert(storachaFwssServiceDeployed)
@@ -182,6 +198,7 @@ ponder.on("StorachaFWSS:FilecoinServiceDeployed", async ({ event, context }) => 
 })
 
 ponder.on("StorachaFWSS:FilBeamControllerChanged", async ({ event, context }) => {
+  await recordTx(event, context)
   const { oldController, newController } = event.args
   await context.db
     .insert(storachaFwssFilbeamControllerChanged)
@@ -189,6 +206,7 @@ ponder.on("StorachaFWSS:FilBeamControllerChanged", async ({ event, context }) =>
 })
 
 ponder.on("StorachaFWSS:ViewContractSet", async ({ event, context }) => {
+  await recordTx(event, context)
   const { viewContract } = event.args
   await context.db
     .insert(storachaFwssViewContractSet)
@@ -196,6 +214,7 @@ ponder.on("StorachaFWSS:ViewContractSet", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:UpgradeAnnounced", async ({ event, context }) => {
+  await recordTx(event, context)
   const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
   await context.db
     .insert(storachaFwssUpgradeAnnounced)
@@ -203,6 +222,7 @@ ponder.on("StorachaFWSS:UpgradeAnnounced", async ({ event, context }) => {
 })
 
 ponder.on("StorachaFWSS:OwnershipTransferred", async ({ event, context }) => {
+  await recordTx(event, context)
   const { previousOwner, newOwner } = event.args
   await context.db
     .insert(storachaFwssOwnershipTransferred)

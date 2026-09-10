@@ -28,12 +28,6 @@ export interface ColumnInfo {
 
 import { TABLES } from "./schema-defs.js"
 
-// Created by the provisioning one-shot (postgres/bootstrap.sql), not in schema-defs TABLES.
-const VIEW_DESCRIPTIONS: Record<string, string> = {
-  tx_meta:
-    "One row per transaction: tx_from, tx_value, gas_used, effective_gas_price, tx_to, tx_selector, status. Event tables carry only tx_hash; JOIN tx_meta USING (tx_hash) for sender/value/gas. Gas cost in FIL = gas_used * effective_gas_price / 1e18",
-}
-
 export class PonderClient {
   readonly network: NetworkConfig
   private queryPool: pg.Pool
@@ -145,11 +139,9 @@ export class PonderClient {
   }
 
   async listTables(): Promise<TableInfo[]> {
-    // rowCount is a planner estimate, not COUNT(*). public holds views over the
-    // data_v* schema; an exact count of tx_meta (a join over millions of
-    // transactions) is too slow for /status. Use pg_class.reltuples, resolved
-    // via pg_rewrite/pg_depend to the backing table(s) for views (MAX across a
-    // join, so tx_meta reports its tx count).
+    // rowCount is a planner estimate, not COUNT(*): public holds views over the
+    // data_v* schema, so read pg_class.reltuples, resolved via pg_rewrite/pg_depend
+    // to the backing table(s) for views (MAX across a join).
     const result = await this.queryRaw(`
       SELECT rel.relname AS name,
         rel.relkind AS kind,
@@ -175,7 +167,7 @@ export class PonderClient {
 
       const rowCount = Number((row as Record<string, unknown>).row_estimate ?? 0)
       const isView = (row.kind as string) === "v"
-      const desc = TABLES[name]?.description ?? VIEW_DESCRIPTIONS[name] ?? (isView ? "(view)" : "")
+      const desc = TABLES[name]?.description ?? (isView ? "(view)" : "")
       tables.push({ name, rowCount, description: desc })
     }
 

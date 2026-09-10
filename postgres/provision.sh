@@ -31,6 +31,9 @@ ALTER ROLE foc_observer_query SET statement_timeout = '30s';
 ALTER ROLE foc_observer_query SET lock_timeout = '5s';
 ALTER ROLE foc_observer_query SET idle_in_transaction_session_timeout = '30s';
 ALTER ROLE foc_observer_query SET temp_file_limit = '256MB';
+-- Analytical sorts under the server's cursor wrapper spill to disk at the 4MB
+-- default and abort on temp_file_limit.
+ALTER ROLE foc_observer_query SET work_mem = '64MB';
 ALTER ROLE foc_observer_query SET search_path = public;
 
 REVOKE TEMPORARY ON DATABASE ponder FROM PUBLIC;

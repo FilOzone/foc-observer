@@ -114,7 +114,7 @@ Call this exactly once at the start of your work. Do not skip it.`,
   server.registerTool("query_sql", {
     description: `Execute read-only SQL against FOC event data indexed from Filecoin contracts by Ponder.
 
-All event tables have: tx_hash, block_number, timestamp. For tx_from, tx_value, gas_used, effective_gas_price: JOIN public.tx_meta USING (tx_hash). One row per tx in tx_meta, joined from ponder_sync.transactions + transaction_receipts + blocks.
+All event tables have: tx_hash, block_number, timestamp. For tx_from, tx_value, gas_used, effective_gas_price: JOIN public.tx_meta USING (tx_hash). One row per tx in tx_meta.
 Max 10,000 rows per query. System catalogs are blocked.
 
 Tables and key columns:

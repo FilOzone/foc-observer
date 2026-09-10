@@ -1,8 +1,10 @@
 import { ponder } from "ponder:registry"
 import { skrAuthorizationsUpdated } from "ponder:schema"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 ponder.on("SessionKeyRegistry:AuthorizationsUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { identity, signer, expiry, permissions: perms, origin } = event.args
   const permissions = perms?.length ? JSON.stringify(perms) : null
   await context.db

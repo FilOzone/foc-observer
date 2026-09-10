@@ -24,8 +24,10 @@ import {
 } from "ponder:schema"
 import { decodePiece } from "./cid-utils.js"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 ponder.on("FWSS:DataSetCreated", async ({ event, context }) => {
+  await recordTx(event, context)
   const {
     dataSetId, providerId, pdpRailId, cacheMissRailId, cdnRailId,
     payer, serviceProvider, payee, metadataKeys, metadataValues,
@@ -52,6 +54,7 @@ ponder.on("FWSS:DataSetCreated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:PieceAdded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, pieceId, pieceCid: pieceCidRaw, keys, values } = event.args
 
   let pieceCid = pieceCidRaw.data as string
@@ -83,6 +86,7 @@ ponder.on("FWSS:PieceAdded", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:FaultRecord", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, periodsFaulted, deadline } = event.args
   await context.db
     .insert(fwssFaultRecord)
@@ -90,6 +94,7 @@ ponder.on("FWSS:FaultRecord", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:RailRateUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, railId, newRate } = event.args
   await context.db
     .insert(fwssRailRateUpdated)
@@ -97,6 +102,7 @@ ponder.on("FWSS:RailRateUpdated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:ServiceTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { approver, dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(fwssServiceTerminated)
@@ -108,6 +114,7 @@ ponder.on("FWSS:ServiceTerminated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:PricingUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { storagePrice, minimumRate } = event.args
   await context.db
     .insert(fwssPricingUpdated)
@@ -115,6 +122,7 @@ ponder.on("FWSS:PricingUpdated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:ProviderApproved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId } = event.args
   await context.db
     .insert(fwssProviderApproved)
@@ -122,6 +130,7 @@ ponder.on("FWSS:ProviderApproved", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:ProviderUnapproved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId } = event.args
   await context.db
     .insert(fwssProviderUnapproved)
@@ -129,6 +138,7 @@ ponder.on("FWSS:ProviderUnapproved", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, oldServiceProvider, newServiceProvider } = event.args
   await context.db
     .insert(fwssDataSetSPChanged)
@@ -136,6 +146,7 @@ ponder.on("FWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:DataSetAuthorizerSet", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, authorizer } = event.args
   await context.db
     .insert(fwssDataSetAuthorizerSet)
@@ -143,6 +154,7 @@ ponder.on("FWSS:DataSetAuthorizerSet", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:PDPPaymentTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, endEpoch, pdpRailId } = event.args
   await context.db
     .insert(fwssPdpPaymentTerminated)
@@ -150,6 +162,7 @@ ponder.on("FWSS:PDPPaymentTerminated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:CDNPaymentTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, endEpoch, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(fwssCdnPaymentTerminated)
@@ -157,6 +170,7 @@ ponder.on("FWSS:CDNPaymentTerminated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:CDNServiceTerminated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { caller, dataSetId, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(fwssCdnServiceTerminated)
@@ -164,6 +178,7 @@ ponder.on("FWSS:CDNServiceTerminated", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, cdnAmountAdded, totalCdnLockup, cacheMissAmountAdded, totalCacheMissLockup } = event.args
   await context.db
     .insert(fwssCdnRailsToppedUp)
@@ -175,6 +190,7 @@ ponder.on("FWSS:CDNPaymentRailsToppedUp", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:DataSetAbandoned", async ({ event, context }) => {
+  await recordTx(event, context)
   const { dataSetId, pdpRailId, cacheMissRailId, cdnRailId } = event.args
   await context.db
     .insert(fwssDataSetAbandoned)
@@ -182,6 +198,7 @@ ponder.on("FWSS:DataSetAbandoned", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:ContractUpgraded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { version, implementation } = event.args
   await context.db
     .insert(contractUpgraded)
@@ -189,6 +206,7 @@ ponder.on("FWSS:ContractUpgraded", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:FilecoinServiceDeployed", async ({ event, context }) => {
+  await recordTx(event, context)
   const { name, description } = event.args
   await context.db
     .insert(fwssServiceDeployed)
@@ -196,6 +214,7 @@ ponder.on("FWSS:FilecoinServiceDeployed", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:FilBeamControllerChanged", async ({ event, context }) => {
+  await recordTx(event, context)
   const { oldController, newController } = event.args
   await context.db
     .insert(fwssFilbeamControllerChanged)
@@ -203,6 +222,7 @@ ponder.on("FWSS:FilBeamControllerChanged", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:ViewContractSet", async ({ event, context }) => {
+  await recordTx(event, context)
   const { viewContract } = event.args
   await context.db
     .insert(fwssViewContractSet)
@@ -210,6 +230,7 @@ ponder.on("FWSS:ViewContractSet", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:UpgradeAnnounced", async ({ event, context }) => {
+  await recordTx(event, context)
   const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
   await context.db
     .insert(upgradeAnnounced)
@@ -217,6 +238,7 @@ ponder.on("FWSS:UpgradeAnnounced", async ({ event, context }) => {
 })
 
 ponder.on("FWSS:OwnershipTransferred", async ({ event, context }) => {
+  await recordTx(event, context)
   const { previousOwner, newOwner } = event.args
   await context.db
     .insert(ownershipTransferred)

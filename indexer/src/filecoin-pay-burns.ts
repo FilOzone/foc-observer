@@ -11,6 +11,7 @@ import { ponder } from "ponder:registry"
 import * as schema from "ponder:schema"
 import { decodeFunctionData } from "viem"
 import { txEventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 const burnForFeesAbi = [
   {
@@ -27,6 +28,7 @@ const burnForFeesAbi = [
 ] as const
 
 ponder.on("FilecoinPayAccount:transaction:to", async ({ event, context }) => {
+  await recordTx(event, context)
   const { transaction } = event
 
   if (!transaction.input || transaction.input.length < 10) return

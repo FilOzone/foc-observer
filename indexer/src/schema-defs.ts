@@ -24,8 +24,7 @@ export interface TableDef {
   indexes?: string[]
 }
 
-// tx_from, tx_value, gas_used, effective_gas_price live in public.tx_meta
-// (backed by ponder_sync). Join via tx_hash.
+// tx_from, tx_value, gas_used, effective_gas_price live in tx_meta. Join via tx_hash.
 export const STANDARD_COLUMNS: Record<string, ColDef> = {
   id: { type: "text", note: "blockHash-logIndex" },
   txHash: { type: "hex", note: "join key for tx_meta" },
@@ -34,6 +33,22 @@ export const STANDARD_COLUMNS: Record<string, ColDef> = {
 }
 
 export const TABLES: Record<string, TableDef> = {
+  // -- Transactions --
+  tx_meta: {
+    description:
+      "One row per transaction that touched an indexed contract, current at the chain head (id and tx_hash are both the tx hash). Event tables carry only tx_hash; JOIN tx_meta USING (tx_hash) for sender, value, target, selector and gas. Gas cost in FIL = gas_used * effective_gas_price / 1e18",
+    columns: {
+      txFrom: { type: "hex" },
+      txTo: { type: "hex", nullable: true, note: "null for contract creation" },
+      txSelector: { type: "text", nullable: true, note: "first 4 bytes of input, e.g. 0x9afd37f2" },
+      txValue: { type: "bigint", note: "attoFIL sent with the tx" },
+      gasUsed: { type: "bigint" },
+      effectiveGasPrice: { type: "bigint" },
+      status: { type: "text", note: "0x1 success, 0x0 revert. Only 0x1 occurs: Ponder does not dispatch reverted transactions" },
+    },
+    indexes: ["txHash", "txFrom", "txTo", "blockNumber"],
+  },
+
   // -- PDPVerifier --
   pdp_data_set_created: {
     description: "Dataset creation in PDPVerifier",

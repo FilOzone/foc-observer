@@ -11,6 +11,7 @@ import {
   ownershipTransferred,
 } from "ponder:schema"
 import { eventId, eventMeta } from "./event-utils.js"
+import { recordTx } from "./tx-meta.js"
 
 /** Decode a hex bytes value to UTF-8 string, falling back to hex if not valid UTF-8. */
 function decodeCapabilityValue(hex: `0x${string}`): string {
@@ -35,6 +36,7 @@ function encodeCapabilities(keys: readonly string[] | undefined, values: readonl
 }
 
 ponder.on("SPRegistry:ProviderRegistered", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId, serviceProvider, payee } = event.args
   await context.db
     .insert(sprProviderRegistered)
@@ -42,6 +44,7 @@ ponder.on("SPRegistry:ProviderRegistered", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:ProductAdded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId, productType, serviceProvider, capabilityKeys, capabilityValues } = event.args
   await context.db
     .insert(sprProductAdded)
@@ -53,6 +56,7 @@ ponder.on("SPRegistry:ProductAdded", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:ProductUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId, productType, serviceProvider, capabilityKeys, capabilityValues } = event.args
   await context.db
     .insert(sprProductUpdated)
@@ -64,6 +68,7 @@ ponder.on("SPRegistry:ProductUpdated", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:ProviderRemoved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId } = event.args
   await context.db
     .insert(sprProviderRemoved)
@@ -71,6 +76,7 @@ ponder.on("SPRegistry:ProviderRemoved", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:ProviderInfoUpdated", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId } = event.args
   await context.db
     .insert(sprProviderInfoUpdated)
@@ -78,6 +84,7 @@ ponder.on("SPRegistry:ProviderInfoUpdated", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:ProductRemoved", async ({ event, context }) => {
+  await recordTx(event, context)
   const { providerId, productType } = event.args
   await context.db
     .insert(sprProductRemoved)
@@ -85,6 +92,7 @@ ponder.on("SPRegistry:ProductRemoved", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:ContractUpgraded", async ({ event, context }) => {
+  await recordTx(event, context)
   const { version, implementation } = event.args
   await context.db
     .insert(contractUpgraded)
@@ -92,6 +100,7 @@ ponder.on("SPRegistry:ContractUpgraded", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:UpgradeAnnounced", async ({ event, context }) => {
+  await recordTx(event, context)
   const { nextImplementation, afterEpoch } = event.args.plannedUpgrade
   await context.db
     .insert(upgradeAnnounced)
@@ -99,6 +108,7 @@ ponder.on("SPRegistry:UpgradeAnnounced", async ({ event, context }) => {
 })
 
 ponder.on("SPRegistry:OwnershipTransferred", async ({ event, context }) => {
+  await recordTx(event, context)
   const { previousOwner, newOwner } = event.args
   await context.db
     .insert(ownershipTransferred)
