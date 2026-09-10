@@ -58,11 +58,27 @@ export default createConfig({
       startBlock: network.START_BLOCK,
       includeTransactionReceipts: true,
     },
+    // v3.5.0 events (PiecesAddedV2, PiecesScheduledForRemoval): same address, fetched only from the upgrade.
+    PDPVerifierV35: {
+      abi: PDPVerifierAbi,
+      chain: networkName,
+      address: network.PDP_VERIFIER,
+      startBlock: network.PDP_VERIFIER_V3_5_BLOCK,
+      includeTransactionReceipts: true,
+    },
     FWSS: {
       abi: FilecoinWarmStorageServiceAbi,
       chain: networkName,
       address: network.FWSS,
       startBlock: network.START_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    // v1.4.0 events (DataSetAuthorizerSet), likewise.
+    FWSSV14: {
+      abi: FilecoinWarmStorageServiceAbi,
+      chain: networkName,
+      address: network.FWSS,
+      startBlock: network.FWSS_V1_4_BLOCK,
       includeTransactionReceipts: true,
     },
     FilecoinPay: {

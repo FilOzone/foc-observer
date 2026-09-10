@@ -5,6 +5,9 @@ type Network = {
   DATABASE_URL: string
   RPC_URL: string
   START_BLOCK: number
+  // Upgrade blocks: ponder.config.ts entries start here so new events fetch only where they exist.
+  PDP_VERIFIER_V3_5_BLOCK: number
+  FWSS_V1_4_BLOCK: number
   PDP_VERIFIER: `0x${string}`
   FWSS: `0x${string}`
   FILECOIN_PAY: `0x${string}`
@@ -22,6 +25,8 @@ export const MAINNET = {
   RPC_URL: "http://localhost:1234/rpc/v1",
   // v1.0.0 deployed ~epoch 5,220,000 on mainnet (Nov 2, 2025). Start slightly before.
   START_BLOCK: 5_215_000,
+  PDP_VERIFIER_V3_5_BLOCK: 6_338_104,
+  FWSS_V1_4_BLOCK: 6_338_200,
   PDP_VERIFIER: "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F",
   FWSS: "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
   FILECOIN_PAY: "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa",
@@ -45,6 +50,8 @@ export const CALIBNET = {
   // Snapshot floor is 3,090,000 (null round); start +2 so the parent is valid.
   // Captures FilecoinPay rail 1 (3,125,305) and PDPVerifier sets 1-48 (3,144,601 onward).
   START_BLOCK: 3_090_002,
+  PDP_VERIFIER_V3_5_BLOCK: 4_028_982,
+  FWSS_V1_4_BLOCK: 4_029_095,
   PDP_VERIFIER: "0x85e366Cf9DD2c0aE37E963d9556F5f4718d6417C",
   FWSS: "0x02925630df557F957f70E112bA06e50965417CA0",
   FILECOIN_PAY: "0x09a0fDc2723fAd1A7b8e3e00eE5DF73841df55a0",
