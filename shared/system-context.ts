@@ -165,7 +165,7 @@ Dataset state machine:
 
 **Settlement**: settleRail() moves funds payer->payee. For PDP rails, FWSS.validatePayment() checks proofs: proven=full payment, faulted=zero, open period=blocked. Escape hatch: settleTerminatedRailWithoutValidation (payer-only, after endEpoch passes) bypasses a stuck validator.
 
-**Piece removal is two-step since PDPVerifier v3.5.0** (2026-09-03): schedulePieceDeletions() emits PiecesScheduledForRemoval; the SP's processPieceDeletions() applies them, emitting PiecesRemoved and voiding the challenge. Scheduled pieces are still active and challengeable. nextProvingPeriod() reverts while the queue is non-empty, so a stuck queue emits nothing, FaultRecord included. Before v3.5.0 removal applied inside nextProvingPeriod with no scheduling event; compare the tables by piece id, post-cutover rows only. DataSetEmpty fires only at nextProvingPeriod.
+**Piece removal is two-step since PDPVerifier v3.5.0** (2026-09-03): schedulePieceDeletions() emits PiecesScheduledForRemoval; the SP's processPieceDeletions() applies them, emitting PiecesRemoved and voiding the challenge. Scheduled pieces are still active and challengeable. nextProvingPeriod() reverts while the queue is non-empty, so a stuck queue emits no events (not even FaultRecord). Before v3.5.0 removal applied inside nextProvingPeriod with no scheduling event; compare the tables by piece id, post-cutover rows only. DataSetEmpty fires only at nextProvingPeriod.
 
 **Rate changes**: Create segments in a queue. Settlement processes each with the rate that applied during that time. Adding pieces = immediate rate increase. Removing pieces = deferred rate decrease (next proving boundary).
 
