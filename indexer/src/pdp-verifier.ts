@@ -87,7 +87,7 @@ ponder.on("PDPVerifier:PiecesAdded", async ({ event, context }) => {
     .values({ id: eventId(event), setId, pieceCount: pieceIds.length, pieces, ...eventMeta(event) })
 })
 
-ponder.on("PDPVerifier:PiecesAddedV2", async ({ event, context }) => {
+ponder.on("PDPVerifierV35:PiecesAddedV2", async ({ event, context }) => {
   await recordTx(event, context)
   const { setId, firstPieceId, pieceCids: pieceCidsRaw } = event.args
 
@@ -112,7 +112,7 @@ ponder.on("PDPVerifier:PiecesRemoved", async ({ event, context }) => {
     .values({ id: eventId(event), setId, pieceCount: pieceIds.length, pieceIds: pieceIdArr, ...eventMeta(event) })
 })
 
-ponder.on("PDPVerifier:PiecesScheduledForRemoval", async ({ event, context }) => {
+ponder.on("PDPVerifierV35:PiecesScheduledForRemoval", async ({ event, context }) => {
   await recordTx(event, context)
   const { setId, pieceIds } = event.args
   const pieceIdArr = pieceIds.length > 0 ? JSON.stringify(pieceIds.map((id: bigint) => Number(id))) : null

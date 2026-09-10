@@ -145,7 +145,7 @@ ponder.on("FWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
     .values({ id: eventId(event), dataSetId, oldServiceProvider, newServiceProvider, ...eventMeta(event) })
 })
 
-ponder.on("FWSS:DataSetAuthorizerSet", async ({ event, context }) => {
+ponder.on("FWSSV14:DataSetAuthorizerSet", async ({ event, context }) => {
   await recordTx(event, context)
   const { dataSetId, authorizer } = event.args
   await context.db
