@@ -13,13 +13,20 @@ beforeAll(async () => {
 
 const mockQuery = vi.fn()
 const mockRelease = vi.fn()
+const poolConnectionStrings: string[] = []
 
 vi.mock("pg", () => {
   return {
     default: {
       Pool: class MockPool {
+        constructor(options: { connectionString: string }) {
+          poolConnectionStrings.push(options.connectionString)
+        }
         connect() {
           return Promise.resolve({ query: mockQuery, release: mockRelease })
+        }
+        query(...args: unknown[]) {
+          return mockQuery(...args)
         }
         end() {
           return Promise.resolve()
@@ -47,9 +54,20 @@ describe("PonderClient.querySql", () => {
   let client: InstanceType<typeof PonderClient>
 
   beforeEach(() => {
-    client = new PonderClient(getNetworkConfig("calibnet"))
     mockQuery.mockReset()
     mockRelease.mockReset()
+    poolConnectionStrings.length = 0
+    client = new PonderClient(getNetworkConfig("calibnet"))
+  })
+
+  test("connects with the query role, not the owner", () => {
+    poolConnectionStrings.length = 0
+    client = new PonderClient(getNetworkConfig("calibnet", {
+      databaseUrl: "postgres://admin@database/ponder",
+      queryDatabaseUrl: "postgres://reader@database/ponder",
+    }))
+
+    expect(poolConnectionStrings).toEqual(["postgres://reader@database/ponder"])
   })
 
   test("uses cursor-based query pipeline", async () => {

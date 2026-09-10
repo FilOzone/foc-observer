@@ -23,6 +23,7 @@ export interface NetworkConfig {
   provingPeriodEpochs: number
   epochDurationSeconds: number
   databaseUrl: string
+  queryDatabaseUrl: string
   rpcUrl: string
   subgraphUrl: string
   contracts: ContractAddresses
@@ -37,6 +38,7 @@ const DEFAULTS: Record<NetworkName, NetworkConfig> = {
     provingPeriodEpochs: 240,
     epochDurationSeconds: 30,
     databaseUrl: "postgres://ponder:ponder@localhost:17825/ponder",
+    queryDatabaseUrl: "postgres://ponder:ponder@localhost:17825/ponder",
     rpcUrl: "http://localhost:1235/rpc/v1",
     subgraphUrl: "https://api.goldsky.com/api/public/project_cmdfaaxeuz6us01u359yjdctw/subgraphs/pdp-explorer/calibration311a/gn",
     contracts: {
@@ -56,6 +58,7 @@ const DEFAULTS: Record<NetworkName, NetworkConfig> = {
     provingPeriodEpochs: 2880,
     epochDurationSeconds: 30,
     databaseUrl: "postgres://ponder:ponder@localhost:17826/ponder",
+    queryDatabaseUrl: "postgres://ponder:ponder@localhost:17826/ponder",
     rpcUrl: "http://localhost:1234/rpc/v1",
     subgraphUrl: "https://api.goldsky.com/api/public/project_cmdfaaxeuz6us01u359yjdctw/subgraphs/pdp-explorer/mainnet311b/gn",
     contracts: {
@@ -72,16 +75,18 @@ const DEFAULTS: Record<NetworkName, NetworkConfig> = {
 
 /**
  * Resolve network config with environment variable overrides.
- * Env vars are per-network: FOC_CALIBNET_DATABASE_URL, FOC_MAINNET_RPC_URL, etc.
- * Falls back to hardcoded localhost defaults (for local dev without Docker).
+ * Env vars are per-network: FOC_CALIBNET_DATABASE_URL,
+ * FOC_CALIBNET_QUERY_DATABASE_URL, FOC_MAINNET_RPC_URL, etc.
+ * Query connections fall back to the primary database URL for local development.
  */
 export function getNetworkConfig(
   name: NetworkName,
-  overrides?: { databaseUrl?: string; rpcUrl?: string; subgraphUrl?: string },
+  overrides?: { databaseUrl?: string; queryDatabaseUrl?: string; rpcUrl?: string; subgraphUrl?: string },
 ): NetworkConfig {
   const prefix = `FOC_${name.toUpperCase()}_`
   const config = { ...DEFAULTS[name], contracts: { ...DEFAULTS[name].contracts } }
   config.databaseUrl = overrides?.databaseUrl ?? process.env[`${prefix}DATABASE_URL`] ?? config.databaseUrl
+  config.queryDatabaseUrl = overrides?.queryDatabaseUrl ?? process.env[`${prefix}QUERY_DATABASE_URL`] ?? config.databaseUrl
   config.rpcUrl = overrides?.rpcUrl ?? process.env[`${prefix}RPC_URL`] ?? config.rpcUrl
   config.subgraphUrl = overrides?.subgraphUrl ?? process.env[`${prefix}SUBGRAPH_URL`] ?? config.subgraphUrl
   return config

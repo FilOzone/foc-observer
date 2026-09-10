@@ -16,11 +16,20 @@ describe("getNetworkConfig", () => {
 
   test("overrides replace defaults", () => {
     const config = getNetworkConfig("calibnet", {
-      databaseUrl: "postgres://custom:1234/db",
+      databaseUrl: "postgres://admin@custom:1234/db",
+      queryDatabaseUrl: "postgres://reader@custom:1234/db",
       rpcUrl: "http://custom:5678/rpc/v1",
     })
-    expect(config.databaseUrl).toBe("postgres://custom:1234/db")
+    expect(config.databaseUrl).toBe("postgres://admin@custom:1234/db")
+    expect(config.queryDatabaseUrl).toBe("postgres://reader@custom:1234/db")
     expect(config.rpcUrl).toBe("http://custom:5678/rpc/v1")
+  })
+
+  test("query connections fall back to the primary database", () => {
+    const config = getNetworkConfig("calibnet", {
+      databaseUrl: "postgres://admin@custom:1234/db",
+    })
+    expect(config.queryDatabaseUrl).toBe("postgres://admin@custom:1234/db")
   })
 
   test("contract addresses are present for all networks", () => {
