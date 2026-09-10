@@ -7,6 +7,7 @@ import {
   pdpDataSetDeleted,
   pdpPiecesAdded,
   pdpPiecesRemoved,
+  pdpPiecesScheduledForRemoval,
   pdpStorageProviderChanged,
   pdpDataSetEmpty,
   pdpFeeUpdateProposed,
@@ -99,6 +100,14 @@ ponder.on("PDPVerifier:PiecesRemoved", async ({ event, context }) => {
   const pieceIdArr = pieceIds.length > 0 ? JSON.stringify(pieceIds.map((id: bigint) => Number(id))) : null
   await context.db
     .insert(pdpPiecesRemoved)
+    .values({ id: eventId(event), setId, pieceCount: pieceIds.length, pieceIds: pieceIdArr, ...eventMeta(event) })
+})
+
+ponder.on("PDPVerifier:PiecesScheduledForRemoval", async ({ event, context }) => {
+  const { setId, pieceIds } = event.args
+  const pieceIdArr = pieceIds.length > 0 ? JSON.stringify(pieceIds.map((id: bigint) => Number(id))) : null
+  await context.db
+    .insert(pdpPiecesScheduledForRemoval)
     .values({ id: eventId(event), setId, pieceCount: pieceIds.length, pieceIds: pieceIdArr, ...eventMeta(event) })
 })
 

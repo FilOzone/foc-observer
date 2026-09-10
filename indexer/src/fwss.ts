@@ -9,6 +9,7 @@ import {
   fwssProviderApproved,
   fwssProviderUnapproved,
   fwssDataSetSPChanged,
+  fwssDataSetAuthorizerSet,
   fwssPdpPaymentTerminated,
   fwssCdnPaymentTerminated,
   fwssCdnServiceTerminated,
@@ -132,6 +133,13 @@ ponder.on("FWSS:DataSetServiceProviderChanged", async ({ event, context }) => {
   await context.db
     .insert(fwssDataSetSPChanged)
     .values({ id: eventId(event), dataSetId, oldServiceProvider, newServiceProvider, ...eventMeta(event) })
+})
+
+ponder.on("FWSS:DataSetAuthorizerSet", async ({ event, context }) => {
+  const { dataSetId, authorizer } = event.args
+  await context.db
+    .insert(fwssDataSetAuthorizerSet)
+    .values({ id: eventId(event), dataSetId, authorizer, ...eventMeta(event) })
 })
 
 ponder.on("FWSS:PDPPaymentTerminated", async ({ event, context }) => {
