@@ -19,7 +19,7 @@
   "dependencies": {
     "hono": "^4.13",
     "multiformats": "^14",
-    "ponder": "npm:@rvagg/ponder@0.17.4-filecoin.2",
+    "ponder": "npm:@rvagg/ponder@0.17.4-filecoin.3",
     "viem": "^2.56"
   },
   "overrides": {
