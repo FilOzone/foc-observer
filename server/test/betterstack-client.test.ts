@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { BetterStackClient, parseBucket } from "../src/betterstack-client.js"
 
 describe("parseBucket", () => {
@@ -27,16 +27,18 @@ describe("BetterStackClient", () => {
     expect(client.isConfigured()).toBe(true)
   })
 
-  test("validateProviderId rejects non-numeric", () => {
-    // Access the private static method via a query that would use it
-    const client = new BetterStackClient("user", "pass")
-    // getProviderDetail calls validateProviderId internally
-    expect(client.getProviderDetail("calibnet", "abc", 72)).rejects.toThrow(/Invalid provider ID/)
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
-  test("validateProviderId accepts numeric", () => {
-    // Won't throw on validation, will fail on network (no real BetterStack)
+  test("validateProviderId rejects non-numeric", async () => {
     const client = new BetterStackClient("user", "pass")
-    expect(client.getProviderDetail("calibnet", "123", 72)).rejects.toThrow() // network error, not validation
+    await expect(client.getProviderDetail("calibnet", "abc", 72)).rejects.toThrow(/Invalid provider ID/)
+  })
+
+  test("validateProviderId accepts numeric", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fetch reached")))
+    const client = new BetterStackClient("user", "pass")
+    await expect(client.getProviderDetail("calibnet", "123", 72)).rejects.toThrow("fetch reached")
   })
 })

@@ -1,5 +1,5 @@
 /**
- * SQL validation using libpg-query (the actual Postgres 17 parser compiled to WASM).
+ * SQL validation using libpg-query (the actual Postgres 18 parser compiled to WASM).
  *
  * Security model: ALLOW-LIST, not deny-list. We define what SQL features are
  * permitted and reject everything else. Unknown AST node types, function names,
@@ -71,11 +71,12 @@ export function validateSql(sql: string): { isExplain: boolean; sql: string } {
     throw new Error("Multiple statements are not allowed. Send one query at a time.")
   }
 
-  const stmt = ast.stmts[0].stmt
+  const stmt = ast.stmts[0].stmt as Record<string, unknown> | undefined
+  if (!stmt) throw new Error("Empty query.")
   const stmtType = Object.keys(stmt)[0]
 
   if (stmtType === "ExplainStmt") {
-    validateExplain(stmt.ExplainStmt)
+    validateExplain(stmt.ExplainStmt as Record<string, unknown>)
     return { isExplain: true, sql: cleaned }
   }
 
@@ -85,7 +86,7 @@ export function validateSql(sql: string): { isExplain: boolean; sql: string } {
 
   // Collect CTE names so we can distinguish them from real table references
   const cteNames = new Set<string>()
-  validateSelect(stmt.SelectStmt, cteNames)
+  validateSelect(stmt.SelectStmt as Record<string, unknown>, cteNames)
   return { isExplain: false, sql: cleaned }
 }
 
