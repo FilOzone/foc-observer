@@ -213,6 +213,27 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("explain analyze select 1")).toThrow(/EXPLAIN ANALYZE/)
   })
 
+  test("blocks EXPLAIN (ANALYZE) option form", () => {
+    expect(() => validateSql("EXPLAIN (FORMAT JSON, ANALYZE) SELECT 1")).toThrow(/EXPLAIN ANALYZE/)
+  })
+
+  test("flags EXPLAIN for execution routing", () => {
+    expect(validateSql("EXPLAIN SELECT 1").isExplain).toBe(true)
+    expect(validateSql("SELECT 1").isExplain).toBe(false)
+  })
+
+  test("blocks EXPLAIN of non-SELECT statements", () => {
+    expect(() => validateSql("EXPLAIN DELETE FROM fp_deposit")).toThrow(/only allowed for SELECT/)
+  })
+
+  test("validates the query inside EXPLAIN", () => {
+    expect(() => validateSql("EXPLAIN SELECT * FROM pg_roles")).toThrow(/not a known FOC event table/)
+  })
+
+  test("blocks data-modifying CTEs", () => {
+    expect(() => validateSql("WITH d AS (DELETE FROM fp_deposit RETURNING *) SELECT * FROM d")).toThrow(/CTEs may only contain SELECT/)
+  })
+
   // -- SELECT INTO / FOR UPDATE --
 
   test("blocks SELECT INTO", () => {
@@ -385,7 +406,7 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
   })
 
   test("blocks comment-only", () => {
-    expect(() => validateSql("-- just a comment")).toThrow()
+    expect(() => validateSql("-- just a comment")).toThrow(/Empty/)
   })
 
   test("blocks syntax errors", () => {
