@@ -15,10 +15,10 @@ export interface DecodedPiece {
 
 /** Decode a contract CID struct to a CID string and raw piece size. */
 export function decodePiece(cidData: { data: `0x${string}` }): DecodedPiece {
-  const bytes = Uint8Array.from(Buffer.from(cidData.data.slice(2), "hex"))
+  const cid = CID.decode(Uint8Array.from(Buffer.from(cidData.data.slice(2), "hex")))
   return {
-    cid: CID.decode(bytes).toString(),
-    rawSize: decodePieceSize(bytes),
+    cid: cid.toString(),
+    rawSize: decodePieceSize(cid.multihash.digest),
   }
 }
 
@@ -52,38 +52,21 @@ export function decodeCidString(cidData: { data: `0x${string}` }): string {
 }
 
 /**
- * Decode raw piece size from PieceCIDv2 bytes.
+ * Decode raw piece size from a PieceCIDv2 multihash digest, laid out as
+ * uvarint padding | 1 byte height | 32 byte root.
  * rawSize = 2^(height-2) * 127 - padding
  */
-function decodePieceSize(bytes: Uint8Array): bigint {
-  let offset = 1 // skip CIDv1 version byte (0x01)
-
-  // Skip codec varint (fil-commitment-unsealed = 0xf101)
-  while (bytes[offset]! & 0x80) offset++
-  offset++
-
-  // Skip multihash code varint (sha2-256-trunc254-padded-binary-tree = 0x1011)
-  while (bytes[offset]! & 0x80) offset++
-  offset++
-
-  // Skip digest length varint
-  while (bytes[offset]! & 0x80) offset++
-  offset++
-
-  // Decode padding varint
-  let padding = 0
-  let shift = 0
-  while (bytes[offset]! & 0x80) {
-    padding |= (bytes[offset]! & 0x7f) << shift
-    shift += 7
+function decodePieceSize(digest: Uint8Array): bigint {
+  let padding = 0n
+  let offset = 0
+  let byte: number
+  do {
+    byte = digest[offset]!
+    padding |= BigInt(byte & 0x7f) << BigInt(7 * offset)
     offset++
-  }
-  padding |= bytes[offset]! << shift
-  offset++
+  } while (byte & 0x80)
 
-  // Height is 1 byte
-  const height = bytes[offset]!
-
+  const height = digest[offset]!
   if (height < 2) return 0n
-  return (1n << BigInt(height - 2)) * 127n - BigInt(padding)
+  return (127n << BigInt(height - 2)) - padding
 }
