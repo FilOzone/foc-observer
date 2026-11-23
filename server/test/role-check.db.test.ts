@@ -8,7 +8,8 @@
 import pg from "pg"
 import { afterAll, beforeAll, describe, expect, test } from "vitest"
 import { getNetworkConfig } from "../src/networks.js"
-import { PonderClient, QUERY_ROLE } from "../src/ponder-client.js"
+import { PonderClient, PONDER_OWNER_ROLE, QUERY_ROLE } from "../src/ponder-client.js"
+import { assertDisposable } from "./disposable-postgres.js"
 
 const ADMIN_URL = process.env.ROLE_CHECK_DATABASE_URL
 const PASSWORD = "role-check"
@@ -21,40 +22,11 @@ const UNSAFE_ROLES: Array<[role: string, grant: string, problem: string]> = [
   ["zz_sequence_usage", "GRANT USAGE ON SEQUENCE data_v1.ids TO zz_sequence_usage", "owns or can modify relations in data_v1"],
   ["zz_temporary", "GRANT TEMPORARY ON DATABASE :db TO zz_temporary", "TEMPORARY on the database"],
   ["zz_schema_usage", "GRANT USAGE ON SCHEMA data_v1 TO zz_schema_usage", "USAGE on schema data_v1"],
+  ["zz_public_create", "GRANT CREATE ON SCHEMA public TO zz_public_create", "CREATE on schema public"],
   ["zz_member", "GRANT pg_monitor TO zz_member", "member of pg_monitor"],
+  ["zz_table_select", "GRANT SELECT ON public.ponder_bookkeeping TO zz_table_select", "can read relations public.ponder_bookkeeping:r"],
+  ["zz_column_select", "GRANT SELECT (id) ON public.ponder_bookkeeping TO zz_column_select", "can read relations public.ponder_bookkeeping:r"],
 ]
-
-interface ClusterState {
-  db: string
-  public_create: boolean
-  public_temp: boolean
-}
-
-/**
- * Throws unless `client` is a superuser on a database with no user relations, in
- * a cluster with no roles besides the connecting user and the pg_* built-ins: a
- * fresh postgres:18 passes, a foc-observer deployment can't.
- */
-async function assertDisposable(client: pg.Client): Promise<ClusterState> {
-  const { rows } = await client.query(`
-    SELECT
-      (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser,
-      (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema') AS relations,
-      ARRAY(SELECT rolname::text FROM pg_roles
-        WHERE rolname NOT LIKE 'pg\\_%' AND rolname <> current_user ORDER BY 1) AS roles,
-      current_database()::text AS db,
-      has_schema_privilege('public', 'public', 'CREATE') AS public_create,
-      has_database_privilege('public', current_database(), 'TEMPORARY') AS public_temp`)
-  const state = rows[0]
-  if (!state.superuser || state.relations > 0 || state.roles.length > 0) {
-    throw new Error(
-      `ROLE_CHECK_DATABASE_URL must name a superuser on a disposable cluster; found superuser=${state.superuser}, ` +
-        `${state.relations} relations, roles [${state.roles.join(", ")}]`,
-    )
-  }
-  return state
-}
 
 /**
  * The query role, the unsafe roles and a minimal Ponder-shaped schema, built in
@@ -76,6 +48,7 @@ class RoleFixture {
   async setup(): Promise<void> {
     const state = await assertDisposable(this.admin)
     const db = pg.escapeIdentifier(state.db)
+    await this.step(`CREATE ROLE ${PONDER_OWNER_ROLE} NOLOGIN`, `DROP ROLE ${PONDER_OWNER_ROLE}`)
 
     await this.step("CREATE SCHEMA data_v1", "DROP SCHEMA data_v1 CASCADE")
     await this.step(
@@ -83,6 +56,12 @@ class RoleFixture {
       "DROP SEQUENCE data_v1.ids; DROP TABLE data_v1.fp_deposit",
     )
     await this.step("CREATE VIEW public.fp_deposit AS SELECT * FROM data_v1.fp_deposit", "DROP VIEW public.fp_deposit")
+    await this.admin.query(`
+      ALTER SCHEMA data_v1 OWNER TO ${PONDER_OWNER_ROLE};
+      ALTER TABLE data_v1.fp_deposit OWNER TO ${PONDER_OWNER_ROLE};
+      ALTER SEQUENCE data_v1.ids OWNER TO ${PONDER_OWNER_ROLE};
+      ALTER VIEW public.fp_deposit OWNER TO ${PONDER_OWNER_ROLE}`)
+    await this.step("CREATE TABLE public.ponder_bookkeeping (id text)", "DROP TABLE public.ponder_bookkeeping")
     if (state.public_create) {
       await this.step("REVOKE CREATE ON SCHEMA public FROM PUBLIC", "GRANT CREATE ON SCHEMA public TO PUBLIC")
     }
@@ -201,6 +180,30 @@ describe.skipIf(!ADMIN_URL)("checkQueryRole against Postgres", () => {
 
     test("the provisioned role passes", async () => {
       expect(await checkAs(urlAs(QUERY_ROLE))).toEqual({ role: QUERY_ROLE, problems: [] })
+    })
+
+    test("rejects a PUBLIC column grant", async () => {
+      await admin.query("GRANT SELECT (id) ON public.ponder_bookkeeping TO PUBLIC")
+      try {
+        expect((await checkAs(urlAs(QUERY_ROLE))).problems).toContain("can read relations public.ponder_bookkeeping:r")
+      } finally {
+        await admin.query("REVOKE SELECT (id) ON public.ponder_bookkeeping FROM PUBLIC")
+      }
+    })
+
+    test("rejects effective PUBLIC access outside public", async () => {
+      await admin.query(`
+        CREATE SCHEMA public_read;
+        CREATE TABLE public_read.relation (id text);
+        GRANT USAGE ON SCHEMA public_read TO PUBLIC;
+        GRANT SELECT ON public_read.relation TO PUBLIC`)
+      try {
+        const { problems } = await checkAs(urlAs(QUERY_ROLE))
+        expect(problems).toContain("USAGE on schema public_read")
+        expect(problems).toContain("can read relations public_read.relation:r")
+      } finally {
+        await admin.query("DROP SCHEMA public_read CASCADE")
+      }
     })
 
     test.each(UNSAFE_ROLES)("rejects %s", async (role, _grant, problem) => {

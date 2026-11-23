@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import { ContractReader } from "../src/contract-reader.js"
 import { getNetworkConfig } from "../src/networks.js"
 
@@ -11,8 +11,13 @@ type ReadArgs = { address: string; functionName: string }
 function readerWith(readContract: (args: ReadArgs) => unknown): ContractReader {
   const reader = new ContractReader(getNetworkConfig("calibnet"))
   // Tests replace the in-process viem client with a deterministic contract-call fixture.
-  const internals = reader as unknown as { client: { readContract: typeof readContract } }
-  internals.client = { readContract }
+  const client = { readContract }
+  const internals = reader as unknown as {
+    client: typeof client
+    createProviderPageClient: (signal: AbortSignal) => typeof client
+  }
+  internals.client = client
+  internals.createProviderPageClient = () => client
   return reader
 }
 
@@ -205,5 +210,345 @@ describe("ContractReader", () => {
       accumulatedFeesFormatted: "2.5",
       startPriceFormatted: "1 FIL",
     })
+  })
+
+  test("pages oversized provider scans with bounded per-provider status reads", async () => {
+    const calls: ReadArgs[] = []
+    const reader = readerWith((args) => {
+      calls.push(args)
+      if (args.functionName === "getProviderCount") return 101n
+      if (args.functionName === "isProviderApproved") return (args as ReadArgs & { args: [bigint] }).args[0] === 1n
+      if (args.functionName === "containsProviderId") return (args as ReadArgs & { args: [bigint] }).args[0] === 2n
+      if (args.functionName === "getProvider") {
+        const providerId = BigInt((args as ReadArgs & { args: [bigint] }).args[0])
+        return {
+          providerId,
+          info: { serviceProvider: OWNER, payee: OWNER, name: `provider-${providerId}`, description: "", isActive: true },
+        }
+      }
+      if (args.functionName === "providerHasProduct") return false
+      throw new Error(`unexpected call ${args.functionName}`)
+    })
+
+    const list = await reader.getAllProviders()
+
+    expect(list).toMatchObject({
+      total: "101",
+      complete: false,
+      truncated: true,
+      nextId: "101",
+      providerStatusAvailable: true,
+      unavailableProviderIds: [],
+    })
+    expect(list.providers).toHaveLength(100)
+    expect(list.providers[0]).toMatchObject({ providerId: "1", isApproved: true, isEndorsed: false })
+    expect(list.providers[1]).toMatchObject({ providerId: "2", isApproved: false, isEndorsed: true })
+    expect(calls.filter((call) => call.functionName === "getProvider")).toHaveLength(100)
+    expect(calls.filter((call) => call.functionName === "isProviderApproved")).toHaveLength(100)
+    expect(calls.filter((call) => call.functionName === "containsProviderId")).toHaveLength(100)
+
+    await expect(reader.getAllProviders(100n)).resolves.toMatchObject({
+      complete: true,
+      truncated: false,
+      nextId: null,
+      providers: [{ providerId: "100" }, { providerId: "101" }],
+    })
+  })
+
+  test("shares concurrent provider scans", async () => {
+    let providerCountCalls = 0
+    const { promise: provider, resolve: resolveProvider } = Promise.withResolvers<unknown>()
+    const reader = readerWith((args) => {
+      switch (args.functionName) {
+        case "getProviderCount":
+          providerCountCalls++
+          return 1n
+        case "isProviderApproved": return false
+        case "containsProviderId": return false
+        case "getProvider": return provider
+        case "providerHasProduct": return false
+        default: throw new Error(`unexpected call ${args.functionName}`)
+      }
+    })
+
+    const first = reader.getAllProviders()
+    const second = reader.getAllProviders()
+    await expect(reader.getAllProviders(2n)).rejects.toThrow("Upstream request capacity exceeded.")
+    resolveProvider({
+      providerId: 1n,
+      info: { serviceProvider: OWNER, payee: OWNER, name: "provider", description: "", isActive: true },
+    })
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      {
+        providers: [{
+          providerId: "1",
+          name: "provider",
+          description: "",
+          serviceProvider: OWNER,
+          payee: OWNER,
+          isActive: true,
+          capabilities: null,
+          capabilitiesAvailable: true,
+          isApproved: false,
+          isEndorsed: false,
+        }],
+        total: "1",
+        complete: true,
+        truncated: false,
+        nextId: null,
+        providerStatusAvailable: true,
+        capabilitiesAvailable: true,
+        unavailableProviderIds: [],
+      },
+      {
+        providers: [{
+          providerId: "1",
+          name: "provider",
+          description: "",
+          serviceProvider: OWNER,
+          payee: OWNER,
+          isActive: true,
+          capabilities: null,
+          capabilitiesAvailable: true,
+          isApproved: false,
+          isEndorsed: false,
+        }],
+        total: "1",
+        complete: true,
+        truncated: false,
+        nextId: null,
+        providerStatusAvailable: true,
+        capabilitiesAvailable: true,
+        unavailableProviderIds: [],
+      },
+    ])
+    expect(providerCountCalls).toBe(1)
+  })
+
+  test("preserves available status when the other membership lookup fails", async () => {
+    const reader = readerWith((args) => {
+      if (args.functionName === "getProviderCount") return 2n
+      const providerId = (args as ReadArgs & { args: [bigint] }).args?.[0]
+      if (args.functionName === "isProviderApproved") {
+        if (providerId === 1n) throw new Error("upstream unavailable")
+        return false
+      }
+      if (args.functionName === "containsProviderId") {
+        if (providerId === 2n) throw new Error("upstream unavailable")
+        return false
+      }
+      if (args.functionName === "getProvider") {
+        return {
+          providerId,
+          info: { serviceProvider: OWNER, payee: OWNER, name: "provider", description: "", isActive: true },
+        }
+      }
+      if (args.functionName === "providerHasProduct") return false
+      throw new Error(`unexpected call ${args.functionName}`)
+    })
+
+    await expect(reader.getAllProviders()).resolves.toMatchObject({
+      complete: false,
+      truncated: false,
+      providerStatusAvailable: false,
+      unavailableProviderIds: [],
+      providers: [
+        { providerId: "1", isApproved: null, isEndorsed: false },
+        { providerId: "2", isApproved: false, isEndorsed: null },
+      ],
+    })
+  })
+
+  test("marks provider capabilities unavailable without dropping the provider", async () => {
+    const reader = readerWith((args) => {
+      if (args.functionName === "getProviderCount") return 1n
+      if (args.functionName === "isProviderApproved") return false
+      if (args.functionName === "containsProviderId") return false
+      if (args.functionName === "getProvider") {
+        return {
+          providerId: 1n,
+          info: { serviceProvider: OWNER, payee: OWNER, name: "provider", description: "", isActive: true },
+        }
+      }
+      if (args.functionName === "providerHasProduct") throw new Error("upstream unavailable")
+      throw new Error(`unexpected call ${args.functionName}`)
+    })
+
+    await expect(reader.getAllProviders()).resolves.toMatchObject({
+      complete: false,
+      capabilitiesAvailable: false,
+      unavailableProviderIds: [],
+      providers: [{ providerId: "1", capabilities: null, capabilitiesAvailable: false }],
+    })
+  })
+
+  test("returns available providers when a provider read fails", async () => {
+    const reader = readerWith((args) => {
+      if (args.functionName === "getProviderCount") return 2n
+      if (args.functionName === "isProviderApproved") return false
+      if (args.functionName === "containsProviderId") return false
+      if (args.functionName === "getProvider") {
+        const providerId = (args as ReadArgs & { args: [bigint] }).args[0]
+        if (providerId === 2n) throw new Error("upstream unavailable")
+        return {
+          providerId,
+          info: { serviceProvider: OWNER, payee: OWNER, name: "provider", description: "", isActive: true },
+        }
+      }
+      if (args.functionName === "providerHasProduct") return false
+      throw new Error(`unexpected call ${args.functionName}`)
+    })
+
+    await expect(reader.getAllProviders()).resolves.toMatchObject({
+      complete: false,
+      truncated: false,
+      nextId: null,
+      unavailableProviderIds: ["2"],
+      providers: [{ providerId: "1" }],
+    })
+  })
+
+  test("reports provider IDs not started before the page deadline", async () => {
+    let signal: AbortSignal | undefined
+    vi.useFakeTimers()
+    const readContract = (args: ReadArgs) => {
+      if (args.functionName === "getProviderCount") return 9n
+      if (args.functionName === "isProviderApproved") return false
+      if (args.functionName === "containsProviderId") return false
+      if (args.functionName === "getProvider") {
+        const deferred = Promise.withResolvers<never>()
+        const pageSignal = signal
+        if (pageSignal) pageSignal.addEventListener("abort", () => deferred.reject(pageSignal.reason), { once: true })
+        return deferred.promise
+      }
+      throw new Error(`unexpected call ${args.functionName}`)
+    }
+    const reader = readerWith(readContract)
+    const internals = reader as unknown as {
+      client: { readContract: typeof readContract }
+      createProviderPageClient: (pageSignal: AbortSignal) => { readContract: typeof readContract }
+    }
+    internals.createProviderPageClient = (pageSignal) => {
+      signal = pageSignal
+      return internals.client
+    }
+
+    try {
+      const page = reader.getAllProviders()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(12_000)
+      const result = await page
+      expect(result).toMatchObject({
+        complete: false,
+        providers: [],
+      })
+      expect([...result.unavailableProviderIds].sort((a, b) => Number(a) - Number(b))).toEqual(
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  test("waits for each capability read before reusing its provider worker", async () => {
+    const capabilityGates = new Map<bigint, PromiseWithResolvers<boolean>>()
+    const capabilityCalls = new Set<bigint>()
+    const { promise: firstPageStarted, resolve: resolveFirstPageStarted } = Promise.withResolvers<void>()
+    const providerCalls: bigint[] = []
+    const reader = readerWith((args) => {
+      if (args.functionName === "getProviderCount") return 9n
+      if (args.functionName === "isProviderApproved") return false
+      if (args.functionName === "containsProviderId") return false
+      if (args.functionName === "getProvider") {
+        const providerId = (args as ReadArgs & { args: [bigint] }).args[0]
+        providerCalls.push(providerId)
+        return {
+          providerId,
+          info: { serviceProvider: OWNER, payee: OWNER, name: `provider-${providerId}`, description: "", isActive: true },
+        }
+      }
+      if (args.functionName === "providerHasProduct") {
+        const providerId = (args as ReadArgs & { args: [bigint] }).args[0]
+        if (providerId === 9n) return false
+        const gate = Promise.withResolvers<boolean>()
+        capabilityGates.set(providerId, gate)
+        capabilityCalls.add(providerId)
+        if (capabilityCalls.size === 8) resolveFirstPageStarted()
+        return gate.promise
+      }
+      throw new Error(`unexpected call ${args.functionName}`)
+    })
+
+    const page = reader.getAllProviders()
+    await firstPageStarted
+    expect(providerCalls).not.toContain(9n)
+
+    for (const gate of capabilityGates.values()) gate.resolve(false)
+    const result = await page
+    expect(result.unavailableProviderIds).toEqual([])
+    expect(result.providers.map((provider) => provider.providerId)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"])
+  })
+
+  test("bounds all page RPCs, including status reads, to eight concurrent calls", async () => {
+    let active = 0
+    let maximum = 0
+    const gate = Promise.withResolvers<void>()
+    const { promise: workersStarted, resolve: resolveWorkersStarted } = Promise.withResolvers<void>()
+    const reader = readerWith((args) => {
+      if (args.functionName === "getProviderCount") return 8n
+      active++
+      maximum = Math.max(maximum, active)
+      if (active === 8) resolveWorkersStarted()
+      return gate.promise.then(() => {
+        active--
+        if (args.functionName === "getProvider") {
+          const providerId = (args as ReadArgs & { args: [bigint] }).args[0]
+          return {
+            providerId,
+            info: { serviceProvider: OWNER, payee: OWNER, name: `provider-${providerId}`, description: "", isActive: true },
+          }
+        }
+        if (args.functionName === "isProviderApproved") return false
+        if (args.functionName === "containsProviderId") return false
+        if (args.functionName === "providerHasProduct") return false
+        throw new Error(`unexpected call ${args.functionName}`)
+      })
+    })
+
+    const page = reader.getAllProviders()
+    await workersStarted
+    expect(maximum).toBe(8)
+    gate.resolve()
+    const result = await page
+    expect(result.providers[0]).toMatchObject({ providerId: "1" })
+    expect(maximum).toBe(8)
+  })
+
+  test("aborts page RPC transport at the page deadline", async () => {
+    const { promise: aborted, resolve: resolveAborted } = Promise.withResolvers<void>()
+    vi.useFakeTimers()
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = Promise.withResolvers<Response>()
+      const abort = () => {
+        resolveAborted()
+        request.reject(init?.signal?.reason)
+      }
+      if (init?.signal?.aborted) abort()
+      else init?.signal?.addEventListener("abort", abort, { once: true })
+      return request.promise
+    }))
+
+    try {
+      const reader = new ContractReader(getNetworkConfig("calibnet"))
+      const page = reader.getAllProviders()
+      const rejected = expect(page).rejects.toThrow("Provider page deadline exceeded.")
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(12_000)
+      await expect(aborted).resolves.toBeUndefined()
+      await rejected
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
   })
 })

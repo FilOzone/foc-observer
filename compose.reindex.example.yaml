@@ -9,5 +9,5 @@ services:
     volumes: !reset []
     pull_policy: never
     restart: "no"
-    command: ["npm", "start", "--", "--schema", "${REINDEX_SCHEMA:?set REINDEX_SCHEMA to a fresh data schema}"]
+    command: ["env", "-u", "DATABASE_VIEWS_SCHEMA", "npm", "start", "--", "--schema", "${REINDEX_SCHEMA:?set REINDEX_SCHEMA to a fresh data schema}"]
     profiles: [reindex]

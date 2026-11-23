@@ -10,6 +10,16 @@ updates:
       github-actions:
         patterns: ["*"]
 
+  - package-ecosystem: docker
+    directories:
+      - /server
+      - /indexer
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: npm
     directories:
       - /client

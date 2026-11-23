@@ -1,192 +1,154 @@
 # Reindex one network
 
-Build a new versioned schema in the network's existing Postgres, check it alongside the live schema, then switch the `public` views. The replacement runs from an image containing its config, schema, ABIs and handlers. Promotion uses **that same image**. Neither catch-up nor cutover changes the checkout mounted by the other network.
+A reindex builds a fresh Ponder schema (`data_vN`) beside the live one with a shadow writer, compares the two, then promotes the candidate and keeps the old schema for rollback. It runs on one network at a time. Run it when a change alters the indexer build ID: indexing code, `ponder.schema.ts`, `ponder.config.ts`, or a Ponder release that changes `BUILD_ID_VERSION`.
 
-This procedure is for a deployment where `public` already contains Ponder views over `data_vN`. A database with event **tables** in `public` needs a migration, not this view cutover. Use Bash, Docker Compose with `!reset` support, `curl` and `jq`. Commands run from the live Compose project directory. Keep that project's `.env`, project name and Compose files in use throughout; a second checkout is a build input, not a second Compose project.
+This runbook is written for an operator or agent with shell access to the deployment host. It gives the facts the procedure depends on, the invariants to confirm at each step and the commands that aren't obvious; derive the rest from the deployment's actual Compose model. Stop and report when a check fails, rather than working around it. Run multi-step commands as a script or in a subshell: `set -e` in an interactive shell closes it, along with the variables rollback needs.
 
-## Preflight
+## Facts the procedure depends on
 
-Choose the network, an unused schema and a clean checkout of the candidate revision. `files` is the colon-separated list of Compose files the live project normally uses, **including any local override**. The example uses stock Compose and a proxy on loopback; adjust `api` for the deployment.
+- **The live checkout is the indexer deployment.** Both `ponder-*` services bind-mount `indexer/src`, `indexer/abis` and `indexer/ponder.schema.ts` from it, and Ponder refuses to resume a schema whose build ID differs from the running code. Changing the checkout changes what both writers run on their next restart, whatever its cause.
+- **A one-network promotion pins images.** The promoted writer runs the candidate image without source mounts. Leave the checkout and other network alone. Before retiring overrides, match the checkout to both running builds, persist `CALIBNET_DATA_SCHEMA` and `MAINNET_DATA_SCHEMA` from their active views, and verify base `docker compose config` resolves both intended schema commands, images and mounts.
+- **The live schema is whatever the `public` views reference.** Ponder publishes `public` views over its `--schema` once it reaches realtime, if started with `--views-schema public`. The server queries only `public`. A shadow writer started without `--views-schema` builds its schema without touching `public`.
+- **Grants follow a manifest.** The `postgres-query-role` provisioner installs `postgres/public-relations.sql` and `bootstrap.sql` in both databases. An event trigger grants `SELECT` on each listed view as Ponder creates it. The server refuses to start if the role can read a view outside its own table list (`TABLES` in its `schema-defs.ts`), or a `public` view that isn't a direct projection of a `data_vN` table. Treat the server image and the provisioner's manifest as one unit, from one commit, promoted and rolled back together.
+- **One provisioner and one server serve both networks.** A candidate's manifest and server must keep working for the network you aren't reindexing.
+- **Progress is in checkpoints.** Each schema has `_ponder_checkpoint` with `latest_checkpoint` and `finalized_checkpoint` per chain. These are 75-digit strings whose digits 27 to 42 hold the block number; whole strings compare as positions in the chain.
+- **The RPC cache is shared.** A shadow writer replays cached ranges and fetches only what's missing, but a new event topic needs RPC history from its start block. Ponder fetches `startBlock - 1` at startup, so that block must be available from the deployment's RPC and must not be a null round. A Ponder minor-version upgrade migrates the cache to a new schema on its first start (0.18 uses `ponder_rpc_cache_1`), leaving the old one for the old version, so rollback still works.
+- **Preconditions.** `public` must hold Ponder views over `data_vN`. A deployment with event tables in `public` needs a schema migration. Check [credentials and grants](#credential-migration) before reindexing.
+
+## Helpers
+
+Run from the live Compose project directory with its `.env` and complete Compose file list, including local overrides.
 
 ```bash
-set -euo pipefail
-export REINDEX_NETWORK=calibnet REINDEX_SCHEMA=data_v2
-candidate=../foc-observer-candidate
-files=docker-compose.yml
-api=http://127.0.0.1:17824
-live=ponder-$REINDEX_NETWORK
-pg=postgres-$REINDEX_NETWORK
-case $REINDEX_NETWORK in calibnet|mainnet) ;; *) exit 1 ;; esac
-[[ $REINDEX_SCHEMA =~ ^data_v[0-9]+$ ]]
-rev=$(git -C "$candidate" rev-parse --short=12 HEAD)
-export REINDEX_IMAGE="foc-observer-indexer:$REINDEX_NETWORK-$REINDEX_SCHEMA-$rev"
+files=docker-compose.yml        # the deployment's full COMPOSE_FILE list
+net=calibnet new=data_v2        # network and an unused schema
+other=mainnet                   # the network left alone
 base() { COMPOSE_FILE="$files" docker compose "$@"; }
-shadow() { COMPOSE_FILE="$files:compose.reindex.example.yaml" docker compose --profile reindex "$@"; }
-db() { base exec -T "$pg" psql -X -v ON_ERROR_STOP=1 -U ponder -d ponder "$@"; }
-backing() { db -Atc "SELECT DISTINCT table_schema FROM information_schema.view_table_usage WHERE view_schema='public' AND view_name='fp_deposit' AND table_name='fp_deposit'"; }
-old=$(backing)
-[[ $old =~ ^data_v[0-9]+$ && $old != "$REINDEX_SCHEMA" ]]
-[[ $(db -At -v s="$REINDEX_SCHEMA" <<<"SELECT to_regnamespace(:'s') IS NULL") == t ]]
-base ps "$live" "$pg" foc-observer
-docker inspect --format '{{.Name}} image={{.Image}} mounts={{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}' \
-  "$(base ps -q "$live")" "$(base ps -q foc-observer)"
-base exec -T "$pg" df -h /var/lib/postgresql
+db() { base exec -T "postgres-$1" psql -X -v ON_ERROR_STOP=1 -U ponder -d ponder "${@:2}"; }
+backing() { db "$1" -Atc "SELECT DISTINCT table_schema FROM information_schema.view_table_usage
+  WHERE view_schema='public' AND view_name='fp_deposit'"; }
+checkpoint() { db "$net" -Atc "SELECT $2 FROM \"$1\"._ponder_checkpoint WHERE chain_name='$net'"; }
+height() { [[ $1 =~ ^[0-9]{75}$ ]] && echo "$((10#${1:26:16}))"; }
 ```
 
-Check space for a second set of tables and indexes, cache growth, and WAL. Record the old schema, live checkout revision, bind mounts, indexer and server image IDs, and current Compose file list. Keep those images and mounted sources unchanged through verification. Check the project has a recoverable database backup. Don't reuse a schema or overwrite an image tag from a previous attempt.
+## 1. Preflight
 
-For a changed start block, Ponder fetches `START_BLOCK - 1`. Check that epoch is a real block available from this deployment's RPC. If it falls in a null round, pick a nearby start whose parent exists and which still includes the earliest required event (`indexer/src/networks.ts` has a calibnet example).
+Confirm, and record in the operation record:
 
-## Build and catch up
+- `old=$(backing "$net")` is a `data_vN` schema, and `$new` doesn't exist (`SELECT to_regnamespace('data_v2') IS NULL`).
+- The candidate checkout is a separate clone, clean (no modified, staged or untracked files), at a recorded commit.
+- The image IDs of the running `ponder-$net` and `foc-observer` containers, the live checkout's revision, the container mounts and the database backup location.
+- Disk headroom for a second copy of the network's tables and indexes, cache growth and WAL.
+- The candidate's start blocks: `startBlock - 1` is fetchable from this deployment's RPC.
+
+## 2. Build the candidate
+
+Extract the candidate commit with `git archive` into a directory kept through the rollback window, then from that tree:
+
+- run `node postgres/generate-public-relations.mjs --check`
+- build the indexer image (`indexer/`) and the server image (`server/Dockerfile`, repository root as context)
+- record both as `sha256:` image IDs. Compose receives the IDs, never tags, so a rebuilt tag can't change what gets promoted.
+
+Check that the candidate manifest still lists every view the query role can read on the other network:
 
 ```bash
-docker build -t "$REINDEX_IMAGE" "$candidate/indexer"
-shadow config --format json | jq -e --arg n "$REINDEX_NETWORK" --arg s "$REINDEX_SCHEMA" --arg i "$REINDEX_IMAGE" '
-  .services.reindex as $r | .services["ponder-"+$n] as $live |
-  $r.image == $i and $r.environment == $live.environment and
-  ($r.volumes // [] | length) == 0 and $r.command == ["npm","start","--","--schema",$s] and
-  ($r.environment.DATABASE_VIEWS_SCHEMA // "") == ""'
-shadow up -d --no-deps reindex
-shadow logs --tail=30 reindex
+allowed=$(grep "^  ('" "$candidate_root/postgres/public-relations.sql" | cut -d"'" -f2 | sort -u)
+readable=$(db "$other" -Atc "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname='public' AND c.relkind='v' AND has_table_privilege('foc_observer_query', c.oid, 'SELECT')" | sort -u)
+comm -23 <(echo "$readable") <(echo "$allowed")   # must print nothing
 ```
 
-The [example service](compose.reindex.example.yaml) inherits the target's settings from the base file. If your deployment overrides RPC, database, networking or other runtime settings, mirror them on `reindex` before starting it. Inspect resolved config locally; it contains credentials. Run one `reindex` service at a time in this project. It writes only to the fresh schema and shared sync cache; it must not publish views during catch-up.
+## 3. Shadow catch-up
 
-`ponder_sync.intervals` tracks covered ranges per filter fragment. Log fragments distinguish chain, contract address and event topic: adding an event to an already indexed contract still needs RPC for that topic's uncovered history. Code-only changes can replay cached blocks locally. A cache hit has run at about 35,000 blocks/minute on calibnet; measure progress on this deployment rather than using that as a deadline.
+`compose.reindex.example.yaml` adds a `reindex` service that extends `ponder-$net`. Add it with `--profile reindex` and set `REINDEX_NETWORK`, `REINDEX_SCHEMA` and `REINDEX_IMAGE` (candidate indexer ID). In `docker compose config`, check the candidate image, empty mounts and `--schema $new`. The command must unset `DATABASE_VIEWS_SCHEMA` and omit `--views-schema`, or Ponder can switch the public views at catch-up.
 
-Read Ponder's checkpoints, not the highest event block: quiet epochs can advance the indexer without inserting an event. In this fork's 75-digit checkpoint the block number is digits 27 through 42. The full checkpoint also distinguishes positions within a block.
+Start it, then follow both schemas with `height "$(checkpoint "$old" finalized_checkpoint)"` and the same for `$new`. Don't restart the live writer during catch-up: its mounts would pair the checkout's code with the old schema, and if the checkout has changed, it refuses to start.
 
-```bash
-checkpoint() { db -At -v s="$1" -v n="$REINDEX_NETWORK" -v col="$2" <<'SQL'
-SELECT :"col" FROM :"s"._ponder_checkpoint WHERE chain_name = :'n';
-SQL
-}
-height() { local cp=$1; [[ $cp =~ ^[0-9]{75}$ ]] && printf '%d\n' "$((10#${cp:26:16}))"; }
-for s in "$old" "$REINDEX_SCHEMA"; do
-  printf '%s latest=%s finalized=%s\n' "$s" "$(height "$(checkpoint "$s" latest_checkpoint)")" "$(height "$(checkpoint "$s" finalized_checkpoint)")"
-done
-```
+## 4. Compare
 
-Repeat until the replacement is near the live head and its logs show realtime indexing. Compare an **unchanged** table through the same completed, finalized block in both schemas. Repeat for relevant tables and separately check expected differences, such as newly indexed events or corrected decoded values. If the start moved, compare only the overlapping block range and check the backfill separately.
+Once the shadow is indexing in realtime, take the lower of the two finalized heights minus one as `through`.
 
-```bash
-a=$(height "$(checkpoint "$old" finalized_checkpoint)")
-b=$(height "$(checkpoint "$REINDEX_SCHEMA" finalized_checkpoint)")
-through=$(( (a < b ? a : b) - 1 )); (( through > 0 ))
-from_block=0  # If the start moved, use the later start block.
-(( from_block >= 0 && from_block <= through ))
-deposits() { db -At -v s="$1" -v lo="$from_block" -v h="$through" <<'SQL'
-SELECT count(*) FROM :"s".fp_deposit WHERE block_number BETWEEN :'lo'::bigint AND :'h'::bigint;
-SQL
-}
-expected=$(deposits "$old")
-[[ $(deposits "$REINDEX_SCHEMA") == "$expected" ]]
-```
-
-### Historical checks for the FWSS dispatcher and storage terms
-
-Run these against the candidate schema before stopping the live writer. With `db -v s="$REINDEX_SCHEMA"`, `:"s"` is a quoted psql identifier. Repeat through `/sql` after promotion using unqualified table names.
+- **Unchanged tables** have equal row counts through `through`, for example `SELECT count(*) FROM "<schema>".fp_deposit WHERE block_number <= <through>` in both schemas. If the start block moved, compare only the overlap and check the backfill separately.
+- **Intentional changes** match what the change claims. Record the queries and results; they get repeated through the API after promotion.
+- **Release-specific checks.** For releases that touch FWSS dispatching or storage terms, run these with the tables qualified by `$new` (`"data_v2".fwss_piece_added`), then unqualified through `/sql` after promotion:
 
 | Network | Query | Expected |
 |---|---|---|
-| Mainnet | `SELECT DISTINCT data_set_id, raw_size FROM :"s".fwss_piece_added WHERE data_set_id IN (1906,1907) AND raw_size IN (6174209750,10469177046)` | Both datasets at 6174209750 bytes; neither at 10469177046. |
-| Mainnet | `SELECT count(*) FROM :"s".fwss_data_set_storage_terms_selected WHERE block_number BETWEEN 6560696 AND 6569926` | 6 selections. |
-| Calibnet | `SELECT data_set_id, storage_terms_id FROM :"s".fwss_data_set_storage_terms_selected WHERE data_set_id BETWEEN 55250 AND 55252` | Only 55252, terms ID zero. All three were created in block 4256439; the first two transactions preceded migration. |
-| Calibnet | `SELECT count(*) FROM :"s".fwss_data_set_storage_terms_selected WHERE block_number BETWEEN 4256439 AND 4269272` | 1554 selections, all zero. Zero is the built-in legacy definition; it has no registration row. |
+| Mainnet | `SELECT DISTINCT data_set_id, raw_size FROM fwss_piece_added WHERE data_set_id IN (1906,1907) AND raw_size IN (6174209750,10469177046)` | Both datasets at 6174209750 bytes, neither at 10469177046. |
+| Mainnet | `SELECT count(*) FROM fwss_data_set_storage_terms_selected WHERE block_number BETWEEN 6560696 AND 6569926` | 6 |
+| Calibnet | `SELECT data_set_id, storage_terms_id FROM fwss_data_set_storage_terms_selected WHERE data_set_id BETWEEN 55250 AND 55252` | Only 55252, terms ID zero. All three were created in block 4256439; the first two preceded the migration. |
+| Calibnet | `SELECT count(*) FROM fwss_data_set_storage_terms_selected WHERE block_number BETWEEN 4256439 AND 4269272` | 1554, all zero. Zero is the built-in legacy terms and has no registration row. |
 
-On calibnet, count the rows by `tx_hash` in `fwss_erc1967_upgraded`, `fwss_diamond_delegate_call` and `fwss_selector_delegated`, respectively. The [1.5 transition](https://filecoin-testnet.blockscout.com/tx/0x8cd0fb616ddd74361813f3fa7815ad31a2412b70bd338175225a37e3ce573a4e) has **2, 1, 73**. The [1.6 migration](https://filecoin-testnet.blockscout.com/tx/0xd87306666a62f0b363e7b1b8c7a651c21916c5106a4e0cb274ffd5317c32cd5e) has **0, 2, 62**. These are counts for the receipts, not for the whole block. Keep the old FWSS and Storacha history checks too: a replacement built against only the latest ABI can pass every new-topic check while losing historical events.
+On calibnet, per `tx_hash`, `fwss_erc1967_upgraded`, `fwss_diamond_delegate_call` and `fwss_selector_delegated` hold 2, 1 and 73 rows for the [1.5 transition](https://filecoin-testnet.blockscout.com/tx/0x8cd0fb616ddd74361813f3fa7815ad31a2412b70bd338175225a37e3ce573a4e), and 0, 2 and 62 for the [1.6 migration](https://filecoin-testnet.blockscout.com/tx/0xd87306666a62f0b363e7b1b8c7a651c21916c5106a4e0cb274ffd5317c32cd5e).
 
-## Prepare promotion before stopping the live writer
+## 5. Prepare promotion and rollback
 
-The stock live indexers bind-mount the same checkout. Keep it in place. Give the selected live service a **durable Compose override** that uses the tested image and removes those mounts. This also leaves the old image and sources available for rollback. Create a new file; don't overwrite an existing release file.
+Write both overrides before stopping anything, and verify each with `docker compose config`:
 
-```bash
-release="compose.release.$REINDEX_NETWORK.$REINDEX_SCHEMA.yaml"
-( set -C; cat > "$release" <<EOF
+```yaml
+# compose.release.<net>.<schema>.yaml
 services:
-  $live:
-    image: $REINDEX_IMAGE
+  ponder-calibnet:
+    image: sha256:<candidate indexer>
+    command: ["npm", "start", "--", "--schema", "data_v2", "--views-schema", "public"]
     build: !reset null
     volumes: !reset []
     pull_policy: never
-EOF
-)
-nextfiles="$files:$release"
-next() { COMPOSE_FILE="$nextfiles" docker compose "$@"; }
+  foc-observer:
+    image: sha256:<candidate server>
+    build: !reset null
+    pull_policy: never
+  postgres-query-role:
+    volumes: !override
+      - <candidate_root>/postgres/provision.sh:/usr/local/bin/provision:ro
+      - <candidate_root>/postgres:/usr/local/share/foc:ro
 ```
 
-If the server must change with the indexer, build it **now**, under a new tag, from the candidate repository root. Add `foc-observer` under `services` in the same release file, with that tag as `image`, `build: !reset null` and `pull_policy: never`. The server serves **both** networks: it must also work with the other network's schema throughout the rollout and rollback.
+The rollback override pins `ponder-$net` to the old image and `--schema $old`, keeping its original mounts, and `foc-observer` to the old server image. Its provisioner volumes must resolve to the ones active before promotion, so the old server gets the manifest it was built with. Confirm the rollback model's `ponder-$net` command, environment and volumes equal the live ones.
 
-```bash
-# Only for a coordinated server change:
-docker build -f "$candidate/server/Dockerfile" -t "foc-observer-server:$rev" "$candidate"
-```
+## 6. Cut over
 
-Record the previous deployment settings, then set `CALIBNET_DATA_SCHEMA` or `MAINNET_DATA_SCHEMA` in `.env` to `$REINDEX_SCHEMA`. Keep the other network's setting unchanged. This edits the *next start*, not the running container. Verify the effective command, source and image before stopping anything:
+1. Pause anything that recreates Compose services or rewrites deployment settings.
+2. Stop `ponder-$net` and record its `latest_checkpoint`. Wait, about five minutes at most, for the shadow's `latest_checkpoint` to reach it. If it doesn't, `base start ponder-$net` and investigate.
+3. Remove the shadow. Start `ponder-$net` from the promotion file list with `--no-deps --no-build`.
+4. Wait until `backing "$net"` returns `$new`. A view that still references `$old` belongs to a table the candidate removed: inspect it and drop it with `DROP VIEW ... RESTRICT`. A dependency error needs investigating, not `CASCADE`.
+5. Run the provisioner from the promotion file list (`run --rm --no-deps postgres-query-role`). Then recreate the server with `up -d --no-deps --no-build --force-recreate foc-observer`, so its startup role check runs against the new grants now rather than at the next unplanned restart.
+6. Verify:
+   - `/status` reports both networks reachable
+   - `/sql` returns the recorded counts for both networks
+   - a changed table answers through `/sql`
+   - the checkpoint advances
+7. Persist the promotion file list as the deployment's `COMPOSE_FILE`, confirm that plain `docker compose config` resolves the same images, mounts and schema, and resume automation.
 
-```bash
-next config --format json | jq -e --arg svc "$live" --arg i "$REINDEX_IMAGE" --arg s "$REINDEX_SCHEMA" '
-  .services[$svc] | .image == $i and (.volumes // [] | length) == 0 and
-  .command == ["npm","start","--","--schema",$s,"--views-schema","public"]'
-```
+## 7. Roll back
 
-## Cut over and verify
+1. Stop `ponder-$net` and start it from the rollback file list against `$old`.
+2. Wait for `backing "$net"` to return `$old`, and drop any candidate-only views with `RESTRICT`.
+3. Run the provisioner from the rollback file list, then recreate the server.
+4. Run the same verification, then persist the rollback file list.
 
-Keep the values of `old`, `files`, `release`, `from_block`, `through` and `expected` in the operation record. If a check fails and the shell exits, restore these values and the shell function definitions before rollback; don't repeat preflight against the switched views.
+Rollback changes schemas and images only. It leaves credentials as they are. Keep `$new` until the cause is understood; it holds the evidence.
 
-```bash
-base stop "$live"
-last=$(checkpoint "$old" latest_checkpoint); [[ $last =~ ^[0-9]{75}$ ]]
-```
+## Credential migration
 
-Wait for the replacement to reach or pass that **full, stopped** checkpoint. If it doesn't catch up in five minutes, the gate stops before removing it. Inspect the shadow logs; `base start "$live"` resumes the original container on its existing schema. Restore the old schema setting before any recreate.
+Check both databases before cutover. A verified query-role login alone doesn't distinguish blanket public grants from the manifest policy. Migrate if the deployment still uses a default owner password, embeds passwords in database URLs, or lacks the release's allow-list and enabled `foc_observer_grant_public_view_select` trigger. Verify with the release provisioner and server, not an older role-check log.
 
-```bash
-for ((i=0; i<60; i++)); do
-  caught=$(checkpoint "$REINDEX_SCHEMA" latest_checkpoint)
-  [[ $caught =~ ^[0-9]{75}$ && ( $caught == "$last" || $caught > "$last" ) ]] && break
-  sleep 5
-done
-(( i < 60 ))
-shadow rm --stop --force reindex
-next up -d --no-deps --no-build "$live"
-next logs --tail=30 "$live"
-```
+The end state:
+- `ponder` has a new owner password and `foc_observer_query` has its own.
+- Every process authenticates through `PGPASSWORD` with a passwordless URL, as the base `docker-compose.yml` does.
+- Both databases hold the release's grants.
+- The server runs the release image and passes its role check on both networks.
 
-Ponder creates the `public` views when the promoted writer reaches realtime. It replaces same-named views in a transaction; the existing `public` schema and its ACL stay in place. If the new schema **removes or renames** a table, its old view can survive. List views still referencing the retired schema, inspect them and drop only the obsolete Ponder views by name with `DROP VIEW ... RESTRICT`. A dependency error needs investigation, not `CASCADE`. This procedure doesn't drop `public` or grant `CREATE` to `PUBLIC`.
-
-```bash
-stale() { db -At -v s="$1" <<'SQL'
-SELECT DISTINCT view_name FROM information_schema.view_table_usage
-WHERE view_schema = 'public' AND table_schema = :'s' ORDER BY view_name;
-SQL
-}
-for ((i=0; i<60; i++)); do
-  [[ $(backing) == "$REINDEX_SCHEMA" ]] && break
-  sleep 5
-done
-[[ $(backing) == "$REINDEX_SCHEMA" ]]
-retired_views=$(stale "$old")
-if [[ -n $retired_views ]]; then printf 'Views still using %s:\n%s\n' "$old" "$retired_views" >&2; exit 1; fi
-next run --rm --no-deps postgres-query-role
-next up -d --no-deps --no-build foc-observer
-api_check() {
-  jq -n --arg n "$REINDEX_NETWORK" --arg lo "$from_block" --arg h "$through" \
-    '{network:$n,sql:("SELECT count(*)::text AS n FROM fp_deposit WHERE block_number BETWEEN " + $lo + " AND " + $h)}' |
-    curl -fsS -H 'Content-Type: application/json' --data-binary @- "$api/sql" |
-    jq -e --arg n "$REINDEX_NETWORK" --arg count "$expected" '.network == $n and .rows[0].n == $count'
-}
-api_check
-```
-
-Wait for `backing` to report the target before applying grants. Confirm the checkpoint continues advancing and query a changed table through `/sql` as well: `/status` alone doesn't prove the new indexed data is visible. Persist `COMPOSE_FILE` as the value of `$nextfiles` in the deployment's `.env` or service environment, using the same project name. Verify ordinary `docker compose config` resolves the same image, mounts and schema as `next config`. Until this is persisted, **use `next` for service operations** so a restart or deployment doesn't recreate the old configuration.
-
-## Roll back
-
-Keep the old schema, matching image, mounted checkout and original Compose settings until verification is complete. If promotion fails after the new writer starts:
-
-1. `next stop "$live"`. Restore the previous network schema setting and `COMPOSE_FILE` in the deployment configuration. Confirm `base config` selects the old image, original mounts and `--schema "$old" --views-schema public`. Keep other networks' settings intact.
-2. Run `base up -d --no-deps --no-build "$live"`. It resumes the retained schema from its checkpoint and recreates the old views on reaching realtime. Watch `base logs --tail=30 "$live"` and wait for `[[ $(backing) == "$old" ]]`.
-3. Run `stale "$REINDEX_SCHEMA"`; remove any candidate-only Ponder views as above. Run `base run --rm --no-deps postgres-query-role` and `base up -d --no-deps --no-build foc-observer` to apply grants and restore the old server image if it changed. Run `api_check` and the old release's affected-table query.
-
-After a successful rollout and the rollback window, retire the **confirmed inactive** data schema and its release artifacts. Keep the live release override and image. The `ponder_sync` schema is shared by both runs, not part of either release's cleanup.
+Constraints and pointers:
+- **Leave the indexers alone.** Keep their images, commands and bind-mounted checkout unchanged, so build IDs don't change and no reindex is needed. Make the change with a temporary Compose override on the deployment's existing file list:
+  - `postgres-query-role` mounts `postgres/provision.sh` at `/usr/local/bin/provision` and `postgres/` at `/usr/local/share/foc` from a clean release checkout. It gets `FOC_DATABASE_OWNER_PASSWORD`, `FOC_DATABASE_OWNER_PREVIOUS_PASSWORD` and `FOC_QUERY_DATABASE_PASSWORD`, and any inherited `PGPASSWORD` is removed (`!reset null`).
+  - Each `ponder-*` pins its running container's image ID (`build: !reset null`, `pull_policy: never`) and switches to `PGPASSWORD` with `DATABASE_URL=postgres://ponder@postgres-<network>:5432/ponder`.
+  - `foc-observer` runs an image built from the release checkout, with `PGPASSWORD` set to the query password and `postgres://foc_observer_query@postgres-<network>:5432/ponder` for both networks.
+  - Diff `docker compose config` with and without the override: only these fields change.
+- For a rehearsal, use disposable `postgres:18` databases. Verify rotation on a populated volume and read access to a published view but not its backing table.
+- **How the rotation works.** The provisioner tries `FOC_DATABASE_OWNER_PASSWORD` on each database. If that fails, it connects with `FOC_DATABASE_OWNER_PREVIOUS_PASSWORD` and rotates to the new one, so a rerun is safe. Remove the previous password from `.env` once both databases accept the new one.
+- **Use targeted `up` commands.** Postgres ignores `POSTGRES_PASSWORD` on an initialized volume, but changing it makes a full `up` recreate the database containers. Use `--no-deps` on `up`.
+- **On failure, don't go backwards.** Keep the rotated credentials and restricted grants and diagnose the failing service. Don't run an older provisioner or restore the old password.
+- **Keep the override active across restarts.** Persist its Compose file list while the live checkout and release differ. Remove it only after the base model resolves the active schema names, matching writer builds, release server and provisioner. Rebuild and recreate the server from that model.
+- **Local Lotus only:** if the live Compose predates the bridge-only proxy, include the release's `lotus-proxy` definition in the override. Set `COMPOSE_PROFILES=lotus` and `LOTUS_PROXY_BIND` to the bridge gateway, recreate the proxy, and verify both listeners bind there. Those settings alone do not change an older wildcard listener.
+- **A deployment that ever queried as an owner or superuser** should be treated as compromised (see the README's security model). A fresh host and fresh volumes may be cheaper than migrating.

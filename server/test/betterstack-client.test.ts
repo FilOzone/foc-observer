@@ -33,12 +33,25 @@ describe("BetterStackClient", () => {
 
   test("validateProviderId rejects non-numeric", async () => {
     const client = new BetterStackClient("user", "pass")
-    await expect(client.getProviderDetail("calibnet", "abc", 72)).rejects.toThrow(/Invalid provider ID/)
+    await expect(client.getProviderDetail("calibnet", "abc", 72)).rejects.toThrow(/Invalid/)
   })
 
-  test("validateProviderId accepts numeric", async () => {
+  test("does not expose fetch failures", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fetch reached")))
     const client = new BetterStackClient("user", "pass")
-    await expect(client.getProviderDetail("calibnet", "123", 72)).rejects.toThrow("fetch reached")
+    await expect(client.getProviderDetail("calibnet", "123", 72)).rejects.toThrow("Upstream request failed.")
+  })
+
+  test("coalesces concurrent provider reads", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(""))
+    vi.stubGlobal("fetch", fetchSpy)
+    const client = new BetterStackClient("user", "pass")
+
+    await Promise.all([
+      client.getProviderMetrics("calibnet", 72),
+      client.getProviderMetrics("calibnet", 72),
+    ])
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 })

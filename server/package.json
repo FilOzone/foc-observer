@@ -8,7 +8,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/main.js",
-    "test": "vitest run",
+    "test": "vitest run --exclude test/bootstrap-publication.db.test.ts",
+    "test:bootstrap": "vitest run test/bootstrap-publication.db.test.ts",
     "test:live": "LIVE_TEST=1 vitest run"
   },
   "dependencies": {

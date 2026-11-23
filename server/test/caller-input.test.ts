@@ -193,7 +193,10 @@ describe("DealbotClient.getProviderWindow", () => {
   test("requests the provider window", async () => {
     const fetchSpy = stubFetch()
     await new DealbotClient().getProviderWindow("mainnet", ADDRESS, "30d")
-    expect(fetchSpy).toHaveBeenCalledWith(`https://dealbot.filoz.org/api/v1/providers/metrics/${ADDRESS}/window?preset=30d`)
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `https://dealbot.filoz.org/api/v1/providers/metrics/${ADDRESS}/window?preset=30d`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 
   test.each(["../../../anything?x=", "..", "a/b", "1%2F2", "x' OR '1'='1", ` ${ADDRESS}`, ""])(

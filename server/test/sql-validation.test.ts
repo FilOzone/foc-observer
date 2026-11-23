@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "vitest"
+import { InputError } from "../src/inputs.js"
 import { MAX_SQL_LENGTH, initParser, validateSql } from "../src/sql-validator.js"
 
 beforeAll(async () => {
@@ -129,16 +130,51 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("SELECT DISTINCT source FROM fwss_data_set_created")).not.toThrow()
   })
 
-  test("allows generate_series", () => {
-    expect(() => validateSql("SELECT * FROM generate_series(1, 10)")).not.toThrow()
+  test("allows input-sized JSON and array expansion", () => {
+    expect(() => validateSql(
+      "SELECT jsonb_array_elements(piece_ids::jsonb) FROM pdp_pieces_added",
+    )).not.toThrow()
+    expect(() => validateSql(
+      "SELECT jsonb_array_elements_text(piece_ids::jsonb) FROM pdp_pieces_added",
+    )).not.toThrow()
+    expect(() => validateSql(
+      "SELECT key FROM jsonb_object_keys('{\"a\": 1}'::jsonb) AS expanded(key)",
+    )).not.toThrow()
+    expect(() => validateSql(
+      "SELECT key, value FROM jsonb_each('{\"a\": 1}'::jsonb) AS entry(key, value)",
+    )).not.toThrow()
+    expect(() => validateSql(
+      "SELECT key, value FROM jsonb_each_text('{\"a\": \"1\"}'::jsonb) AS entry(key, value)",
+    )).not.toThrow()
+    expect(() => validateSql(
+      "SELECT regexp_matches(source, '(.)', 'g') FROM fwss_data_set_created",
+    )).not.toThrow()
+    expect(() => validateSql("SELECT value FROM unnest(ARRAY[1, 2]) AS expanded(value)")).not.toThrow()
+  })
+
+  test.each([
+    "SELECT * FROM generate_series(0, 9999)",
+    "SELECT * FROM generate_series(1, 10, 3)",
+    "SELECT generate_series(1, piece_count) FROM pdp_pieces_added",
+  ])("blocks generate_series: %s", (sql) => {
+    expect(() => validateSql(sql)).toThrow(/generate_series.*not allowed/)
+  })
+
+  test.each([
+    ["SELECT string_agg(source, ',') FROM fwss_data_set_created", "string_agg"],
+    ["SELECT array_agg(source) FROM fwss_data_set_created", "array_agg"],
+    ["SELECT json_agg(source) FROM fwss_data_set_created", "json_agg"],
+    ["SELECT jsonb_agg(source) FROM fwss_data_set_created", "jsonb_agg"],
+  ])("blocks memory-growing aggregate %s", (sql, functionName) => {
+    expect(() => validateSql(sql)).toThrow(new RegExp(`${functionName}.*not allowed`))
   })
 
   test("allows string functions", () => {
     expect(() => validateSql("SELECT lower(source), length(source), concat(source, '-test') FROM fwss_data_set_created")).not.toThrow()
   })
 
-  test("allows JSON functions", () => {
-    expect(() => validateSql("SELECT jsonb_array_length(pieces::jsonb) FROM pdp_pieces_added")).not.toThrow()
+  test("allows bounded JSON functions", () => {
+    expect(() => validateSql("SELECT jsonb_array_length(pieces::jsonb), to_jsonb(piece_count) FROM pdp_pieces_added")).not.toThrow()
   })
 
   test("allows statistical aggregates", () => {
@@ -417,7 +453,7 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
   )
 
   test("blocks catalog enumeration through regclass", () => {
-    expect(() => validateSql("SELECT g::regclass::text FROM generate_series(1, 20000) g")).toThrow(/Type regclass is not allowed/)
+    expect(() => validateSql("SELECT 'pg_roles'::regclass::text")).toThrow(/Type regclass is not allowed/)
     expect(() => validateSql("SELECT CAST('pg_roles' AS regclass)")).toThrow(/Type regclass is not allowed/)
   })
 
@@ -541,6 +577,21 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
   test("rejects oversized queries before parsing", () => {
     const oversized = `SELECT * FROM fp_deposit WHERE id IN (${"1,".repeat(MAX_SQL_LENGTH)}1)`
     expect(() => validateSql(oversized)).toThrow(/Query too long/)
+  })
+
+  test("rejects oversized raw SQL before trimming", () => {
+    const oversized = `${" ".repeat(MAX_SQL_LENGTH)}SELECT 1`
+    expect(() => validateSql(oversized)).toThrow(/Query too long/)
+  })
+
+  test("returns bounded InputError messages for caller SQL", () => {
+    const functionName = "a".repeat(1_000)
+    expect(() => validateSql(`SELECT ${functionName}(1)`)).toThrow(InputError)
+    try {
+      validateSql(`SELECT ${functionName}(1)`)
+    } catch (err) {
+      expect((err as Error).message.length).toBeLessThanOrEqual(300)
+    }
   })
 
   test("accepts a query at the length limit", () => {

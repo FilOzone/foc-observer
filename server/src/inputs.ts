@@ -14,8 +14,11 @@ export class InputError extends Error {
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 
-// uint256 has at most 78 decimal digits
-const SET_ID_RE = /^\d{1,78}$/
+const UINT256_RE = /^\d{1,78}$/
+const MAX_UINT256 = (1n << 256n) - 1n
+
+// Allows up to 50,000 SQL characters even with JSON unicode escapes.
+export const MAX_REQUEST_BYTES = 320 * 1024
 
 export const MAX_WEEKS = 520
 
@@ -27,12 +30,13 @@ export function parseAddress(value: string): string {
   return value.toLowerCase()
 }
 
-/** Dataset ID as a canonical decimal string, without leading zeros. */
-export function parseSetId(value: string): string {
-  if (!SET_ID_RE.test(value)) {
-    throw new InputError("Invalid dataset ID: expected a non-negative integer.")
+/** Canonical decimal contract identifier. Bound the input before BigInt conversion. */
+export function parseUint256(value: string): string {
+  if (UINT256_RE.test(value)) {
+    const id = BigInt(value)
+    if (id <= MAX_UINT256) return id.toString()
   }
-  return BigInt(value).toString()
+  throw new InputError("Invalid ID: expected a decimal uint256.")
 }
 
 /** History window in weeks, 1 to MAX_WEEKS. */

@@ -12,6 +12,7 @@
  * The parser must be initialized once via initParser() before use.
  */
 
+import { InputError } from "./inputs.js"
 import { loadModule, parseSync, type SqlError } from "libpg-query"
 import { TABLES } from "./schema-defs.js"
 
@@ -42,15 +43,25 @@ const ALLOWED_TABLES = new Set(Object.keys(TABLES))
  * Returns metadata about the query for execution routing.
  */
 export function validateSql(sql: string): { isExplain: boolean; sql: string } {
+  try {
+    return validateSqlInput(sql)
+  } catch (err) {
+    if (err instanceof InputError) throw err
+    const message = err instanceof Error ? err.message : "Invalid SQL query."
+    throw new InputError(message.slice(0, 300))
+  }
+}
+
+function validateSqlInput(sql: string): { isExplain: boolean; sql: string } {
   if (!initialized) throw new Error("SQL parser not initialized. Call initParser() first.")
+  if (sql.length > MAX_SQL_LENGTH) {
+    throw new Error(`Query too long: ${sql.length} characters, limit is ${MAX_SQL_LENGTH}.`)
+  }
 
   // Strip BOM, trim, drop trailing semicolons (they break querySql's cursor
   // wrapper). Internal semicolons survive, so multi-statement is still caught.
   const cleaned = sql.replace(/^\uFEFF/, "").trim().replace(/\s*;+\s*$/, "")
   if (!cleaned) throw new Error("Empty query.")
-  if (cleaned.length > MAX_SQL_LENGTH) {
-    throw new Error(`Query too long: ${cleaned.length} characters, limit is ${MAX_SQL_LENGTH}.`)
-  }
 
   let ast: ReturnType<typeof parseSync>
   try {
@@ -220,8 +231,8 @@ const ALLOWED_NODE_TYPES = new Set([
   // Row expressions
   "RowExpr",
 
-  // JSON (Postgres 17)
-  "JsonConstructorExpr", "JsonObjectAgg", "JsonArrayAgg",
+  // JSON constructors
+  "JsonConstructorExpr",
 ])
 
 // Functions allowed in queries. Lowercase, unqualified names only.
@@ -231,8 +242,7 @@ const ALLOWED_FUNCTIONS = new Set([
   "count", "sum", "avg", "min", "max",
   "stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop",
   "percentile_cont", "percentile_disc", "mode", "corr", "covar_pop", "covar_samp",
-  "array_agg", "string_agg", "bool_and", "bool_or",
-  "json_agg", "jsonb_agg", "json_object_agg", "jsonb_object_agg",
+  "bool_and", "bool_or",
 
   // Conditional / null handling
   "coalesce", "nullif", "greatest", "least",
@@ -248,12 +258,11 @@ const ALLOWED_FUNCTIONS = new Set([
   "length", "lower", "upper", "trim", "ltrim", "rtrim",
   "substring", "substr", "replace", "regexp_replace",
   "split_part", "concat", "concat_ws",
-  "left", "right", "reverse", "repeat",
+  "left", "right", "reverse",
   "starts_with", "encode", "decode",
   "position", "strpos", "overlay",
-  "lpad", "rpad", "initcap", "ascii", "chr",
+  "initcap", "ascii", "chr",
   "regexp_match", "regexp_matches",
-  "format",
 
   // Numeric / math
   "abs", "ceil", "ceiling", "floor", "round", "trunc",
@@ -271,19 +280,17 @@ const ALLOWED_FUNCTIONS = new Set([
   "json_extract_path_text", "jsonb_extract_path_text",
   "json_array_length", "jsonb_array_length",
   "json_typeof", "jsonb_typeof",
-  "jsonb_each", "jsonb_each_text",
-  "jsonb_object_keys", "jsonb_array_elements",
-  "jsonb_array_elements_text",
+  "jsonb_array_elements", "jsonb_array_elements_text",
+  "jsonb_object_keys", "jsonb_each", "jsonb_each_text",
   "row_to_json", "to_json", "to_jsonb",
-  "jsonb_pretty",
   "json_strip_nulls", "jsonb_strip_nulls",
 
   // Array
   "array_length", "array_upper", "array_lower",
-  "unnest", "array_to_string", "string_to_array",
+  "array_to_string", "string_to_array",
   "array_remove", "array_position",
   "array_cat", "array_append", "array_prepend",
-  "generate_series",
+  "unnest",
 
   // Window functions
   "row_number", "rank", "dense_rank", "ntile",
@@ -296,6 +303,7 @@ const ALLOWED_FUNCTIONS = new Set([
   // Bytes / hex
   "octet_length", "bit_length",
 ])
+
 
 // Functions the parser generates from standard SQL syntax (EXTRACT, TRIM,
 // AT TIME ZONE, OVERLAPS, ...). SYSTEM_USER, COLLATION FOR and XMLEXISTS arrive
@@ -407,10 +415,9 @@ function validateFuncCall(node: Record<string, unknown>): void {
   }
 
   if (!ALLOWED_FUNCTIONS.has(name)) {
-    throw new Error(`Function ${name}() is not allowed. Only safe read-only functions are permitted.`)
+    throw new Error(`Function ${name}() is not allowed.`)
   }
 }
-
 function validateTableRef(node: Record<string, unknown>, cteNames: ReadonlySet<string>): void {
   const relname = node.relname as string | undefined
   if (!relname) return

@@ -1,91 +1,44 @@
+import { InputError } from "./inputs.js"
+import type { SqlSizeMetrics } from "./ponder-client.js"
+import { PublicError } from "./public-error.js"
+
 /**
  * Structured JSON logger for foc-observer.
  *
- * Writes JSON lines to stdout and optionally to a persistent log file.
- * Every entry has a type field for filtering:
- *   mcp     -- MCP tool calls (tool name, params, duration, result size)
- *   rest    -- HTTP REST requests (method, path, status, duration)
- *   sql     -- SQL queries (full text, network, rows, duration, tables touched)
- *   startup -- Server config snapshot
- *
- * Analysis examples:
- *   # Tool call frequency
- *   jq -r 'select(.type=="mcp") | .tool' < foc-observer.jsonl | sort | uniq -c | sort -rn
- *
- *   # Slow SQL queries (> 500ms)
- *   jq 'select(.type=="sql" and .durationMs > 500)' < foc-observer.jsonl
- *
- *   # Agent query patterns: which tables are queried most
- *   jq -r 'select(.type=="sql") | .tables[]?' < foc-observer.jsonl | sort | uniq -c | sort -rn
- *
- *   # Tool call sequences (consecutive pairs)
- *   jq -r 'select(.type=="mcp") | .tool' < foc-observer.jsonl | paste - - | sort | uniq -c | sort -rn
- *
- *   # Average duration per tool
- *   jq -r 'select(.type=="mcp") | [.tool, .durationMs] | @tsv' < foc-observer.jsonl | \
- *     awk '{sum[$1]+=$2; cnt[$1]++} END {for(t in sum) printf "%s\t%.0f\t%d\n", t, sum[t]/cnt[t], cnt[t]}' | sort -k2 -rn
- *
- *   # Network preference
- *   jq -r 'select(.type=="mcp" and .params.network) | .params.network' < foc-observer.jsonl | sort | uniq -c
- *
- *   # Errors by tool
- *   jq 'select(.type=="mcp" and .error) | {tool, error}' < foc-observer.jsonl
- *
- *   # SQL queries with seq scans (for index tuning)
- *   jq 'select(.type=="sql" and .slow)' < foc-observer.jsonl
+ * JSON lines on stdout. Compose controls rotation and retention.
  */
 
-import { appendFile, mkdir } from "node:fs/promises"
-import { existsSync } from "node:fs"
-import { dirname } from "node:path"
-
-const LOG_PATH = process.env.FOC_LOG_PATH || ""
 const SLOW_QUERY_MS = 500
-
-// Indexer head/lag polls (external dashboards) dominate volume with no analytical
-// value. Fast ones are dropped from the persisted file; slow/errored ones are kept.
-const HEARTBEAT_SQL = /^\s*select\s+(count\(\*\)\s+as\s+n,\s*)?max\(block_number\)\s+as\s+m\s+from\s+[a-z_]+\s*$/i
-
-let logReady: Promise<void> | undefined
-
-async function ensureLogDir(): Promise<void> {
-  if (!LOG_PATH) return
-  const dir = dirname(LOG_PATH)
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true })
-  }
-}
 
 export interface McpLogEntry {
   type: "mcp"
   ts: string
   tool: string
-  params: Record<string, unknown>
   durationMs: number
   resultChars?: number
-  error?: string
+  error?: "input" | "backend"
 }
 
 export interface RestLogEntry {
   type: "rest"
   ts: string
   method: string
-  path: string
+  operation: string
   status: number
   durationMs: number
 }
 
-export interface SqlLogEntry {
+export interface SqlLogEntry extends SqlSizeMetrics {
   type: "sql"
   ts: string
   via: "rest" | "mcp"
   network: string
-  sql: string
+  sql?: string
   durationMs: number
   rowCount?: number
   tables?: string[]
   slow?: boolean
-  error?: string
+  error?: "input" | "backend"
 }
 
 export interface StartupLogEntry {
@@ -96,31 +49,18 @@ export interface StartupLogEntry {
   betterstack: boolean
 }
 
-type LogEntry = McpLogEntry | RestLogEntry | SqlLogEntry | StartupLogEntry
-
-// MCP transport keys that are not tool params
-const TRANSPORT_KEYS = new Set(["signal", "_meta", "requestId", "requestInfo"])
-
-function sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(params)) {
-    if (k === "i_have_read_the_system_context") continue
-    if (TRANSPORT_KEYS.has(k)) continue
-    if (k === "sql" && typeof v === "string") {
-      out[k] = v.length > 1000 ? v.slice(0, 1000) + "..." : v
-    } else {
-      out[k] = v
-    }
-  }
-  // Extract useful caller info from MCP transport metadata
-  const reqInfo = params.requestInfo as Record<string, unknown> | undefined
-  const headers = reqInfo?.headers as Record<string, string> | undefined
-  if (headers) {
-    if (headers["user-agent"]) out._ua = headers["user-agent"]
-    if (headers["x-real-ip"]) out._ip = headers["x-real-ip"]
-  }
-  return out
+export interface BackendLogEntry {
+  type: "backend"
+  ts: string
+  component: string
+  operation: string
+  network?: string
+  category: "database" | "network" | "rpc" | "upstream" | "unknown"
+  cause: "authentication" | "connection" | "response" | "timeout" | "upstream" | "unknown"
+  code?: string | number
 }
+
+type LogEntry = McpLogEntry | RestLogEntry | SqlLogEntry | StartupLogEntry | BackendLogEntry
 
 /** Extract table names referenced in a SQL query (simple heuristic). */
 function extractTables(sql: string): string[] {
@@ -140,24 +80,22 @@ function extractTables(sql: string): string[] {
 
 export function logMcp(
   tool: string,
-  params: Record<string, unknown>,
   durationMs: number,
-  opts?: { resultChars?: number; error?: string },
+  opts?: { resultChars?: number; error?: "input" | "backend" },
 ): void {
   const entry: McpLogEntry = {
     type: "mcp",
     ts: new Date().toISOString(),
     tool,
-    params: sanitizeParams(params),
     durationMs,
     ...opts,
   }
   emit(entry)
 }
 
-export function logRest(method: string, path: string, status: number, durationMs: number): void {
-  // Access log: stdout only, never persisted (pure noise in the analysis file).
-  emit({ type: "rest", ts: new Date().toISOString(), method, path, status, durationMs }, false)
+export function logRest(method: string, routePath: string, status: number, durationMs: number): void {
+  const operation = /^(?:\/(?:[a-z_]+|:[a-z_]+))*\/?$/.test(routePath) ? routePath : "request"
+  emit({ type: "rest", ts: new Date().toISOString(), method, operation, status, durationMs })
 }
 
 export function logSql(
@@ -165,33 +103,98 @@ export function logSql(
   network: string,
   sql: string,
   durationMs: number,
-  opts?: { rowCount?: number; error?: string },
+  opts?: SqlSizeMetrics & { rowCount?: number; error?: "input" | "backend" },
 ): void {
+  const failed = opts?.error !== undefined
   const entry: SqlLogEntry = {
     type: "sql",
     ts: new Date().toISOString(),
     via,
     network,
-    sql: sql.length > 2000 ? sql.slice(0, 2000) + "..." : sql,
+    ...(failed ? {} : { sql: sql.length > 2_000 ? `${sql.slice(0, 2_000)}...` : sql }),
     durationMs,
-    tables: extractTables(sql),
+    tables: extractTables(sql.slice(0, 2_000)),
     ...opts,
   }
   if (durationMs >= SLOW_QUERY_MS) entry.slow = true
-  const persist = entry.slow || Boolean(opts?.error) || !HEARTBEAT_SQL.test(sql)
-  emit(entry, persist)
+  emit(entry)
+}
+
+const NETWORK_CODES: Record<string, true> = {
+  ECONNABORTED: true,
+  ECONNREFUSED: true,
+  ECONNRESET: true,
+  EHOSTUNREACH: true,
+  ENETUNREACH: true,
+  ENOTFOUND: true,
+  EPIPE: true,
+  ETIMEDOUT: true,
+  UND_ERR_CONNECT_TIMEOUT: true,
+  UND_ERR_HEADERS_TIMEOUT: true,
+  UND_ERR_SOCKET: true,
+}
+const RPC_ERROR_NAMES: Record<string, true> = {
+  CallExecutionError: true,
+  ContractFunctionExecutionError: true,
+  HttpRequestError: true,
+  RpcRequestError: true,
+}
+
+function boundedLabel(value: string): string {
+  return /^[a-z][a-z0-9_.:-]{0,63}$/.test(value) ? value : "unknown"
+}
+
+function failureDetails(error: unknown): Omit<BackendLogEntry, "type" | "ts" | "component" | "operation" | "network"> {
+  let current = error
+  for (let depth = 0; depth < 4 && typeof current === "object" && current !== null; depth++) {
+    const value = current as { code?: unknown; name?: unknown; cause?: unknown; status?: unknown }
+    if (typeof value.code === "string") {
+      if (Object.hasOwn(NETWORK_CODES, value.code)) {
+        return { category: "network", cause: "connection", code: value.code }
+      }
+      if (/^[0-9A-Z]{5}$/.test(value.code)) {
+        return { category: "database", cause: "upstream", code: value.code }
+      }
+    }
+    if (typeof value.code === "number" && Number.isInteger(value.code) && value.code >= -99_999 && value.code <= 99_999) {
+      return { category: "rpc", cause: "upstream", code: value.code }
+    }
+    if (value.name === "AbortError") return { category: "network", cause: "timeout" }
+    if (typeof value.name === "string" && Object.hasOwn(RPC_ERROR_NAMES, value.name)) {
+      return { category: "rpc", cause: "upstream" }
+    }
+    if (typeof value.status === "number" && Number.isInteger(value.status) && value.status >= 100 && value.status <= 599) {
+      return {
+        category: "upstream",
+        cause: value.status === 401 || value.status === 403 ? "authentication" : "response",
+        code: value.status,
+      }
+    }
+    current = value.cause
+  }
+  return { category: "unknown", cause: "unknown" }
+}
+
+/** Log bounded failure metadata without retaining backend diagnostics or request content. */
+export function logBackendError(component: string, operation: string, error: unknown, network?: string): void {
+  if (error instanceof InputError) return
+  const cause = error instanceof PublicError ? error.cause : error
+  if (cause === undefined) return
+  emit({
+    type: "backend",
+    ts: new Date().toISOString(),
+    component: boundedLabel(component),
+    operation: boundedLabel(operation),
+    ...(network === undefined ? {} : { network: boundedLabel(network) }),
+    ...failureDetails(cause),
+  })
 }
 
 export function logStartup(port: number, networks: string[], betterstack: boolean): void {
   emit({ type: "startup", ts: new Date().toISOString(), port, networks, betterstack })
 }
 
-function emit(entry: LogEntry, persist = true): void {
-  const line = JSON.stringify(entry)
-  process.stdout.write(line + "\n")
-
-  if (persist && LOG_PATH) {
-    if (!logReady) logReady = ensureLogDir()
-    logReady.then(() => appendFile(LOG_PATH, line + "\n").catch(() => {}))
-  }
+function emit(entry: LogEntry): void {
+  // Drop telemetry instead of queueing requests' logs behind a stalled sink.
+  if (!process.stdout.writableNeedDrain) process.stdout.write(JSON.stringify(entry) + "\n")
 }
