@@ -1,0 +1,216 @@
+name: release-please
+
+# Releases the @filoz/foc-observer client (client/). release-please counts only
+# commits that touch client/ and maintains a release PR; merging it tags
+# foc-observer-vX.Y.Z and publishes the tarball to npm through trusted publishing.
+# A manual dispatch on an existing release tag republishes a release whose
+# publish job failed.
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run npm publish with --dry-run (manual dispatch only)
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs['client--release_created'] }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          # PAT so release PRs trigger other workflows (test.yml, add-issues-and-prs-to-fs-project-board).
+          # This PAT has the permissions outlined in https://github.com/googleapis/release-please-action?tab=readme-ov-file#workflow-permissions.
+          # Using GITHUB_TOKEN suppresses follow-on workflow runs, so release PRs wouldn't be tested or added to the project board.
+          token: ${{ secrets.FILOZZY_RELEASE_PLEASE_PAT }}
+          config-file: .github/release-please-config.json
+          manifest-file: .github/release-please-manifest.json
+
+  validate-dispatch:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate dispatch ref and release state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          case "$REF" in
+            refs/tags/foc-observer-v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::Dispatch ref must be a foc-observer-vX.Y.Z tag, got: $REF"
+              exit 1
+              ;;
+          esac
+          TAG="${REF#refs/tags/}"
+          VERSION="${TAG#foc-observer-v}"
+
+          PKG_NAME="$(node -p "require('./client/package.json').name")"
+          PKG_VERSION="$(node -p "require('./client/package.json').version")"
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG does not match client/package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+          # Confirm the tag commit is on the default branch via GitHub's
+          # compare API (works regardless of local clone depth).
+          STATUS="$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$SHA" --jq .status)"
+          case "$STATUS" in
+            identical|behind) ;;
+            *)
+              echo "::error::Tag commit $SHA is not an ancestor of $DEFAULT_BRANCH (compare status: $STATUS)"
+              exit 1
+              ;;
+          esac
+
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::GitHub release $TAG not found"
+            exit 1
+          fi
+
+          PUBLISHED="$(npm view "$PKG_NAME@$VERSION" version 2>/dev/null || true)"
+          if [ -n "$PUBLISHED" ]; then
+            echo "::error::npm already has $PKG_NAME@$PUBLISHED"
+            exit 1
+          fi
+
+  build:
+    needs: [release-please, validate-dispatch]
+    if: |
+      always() && (
+        needs.release-please.outputs.release_created == 'true' ||
+        needs.validate-dispatch.result == 'success'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: client
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'lts/*'
+          check-latest: true
+          registry-url: 'https://registry.npmjs.org'
+
+      # Pin npm to a known-good major to avoid @latest drift on a publish-path runner.
+      - name: Pin npm
+        run: npm install -g npm@11
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Pack tarball
+        id: pack
+        run: |
+          set -euo pipefail
+          TARBALL="$(npm pack --silent)"
+          test -n "$TARBALL"
+          test -f "$TARBALL"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-tarball
+          path: client/${{ steps.pack.outputs.tarball }}
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # build needs both release-please and validate-dispatch, and exactly one of
+    # those is skipped on every trigger (release-please on dispatch, validate-dispatch
+    # on push). That skip propagates down the needs chain, so publish must override
+    # with always() the same way build does, then gate on build actually succeeding.
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # OIDC for npm trusted publishing
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'lts/*'
+          check-latest: true
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Pin npm
+        run: npm install -g npm@11
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-tarball
+          path: artifact
+
+      - name: Publish tarball to npm
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          TARBALL_NAME: ${{ needs.build.outputs.tarball }}
+        run: |
+          set -euo pipefail
+
+          # Assert exactly one tarball was delivered and it matches the
+          # filename emitted by the build job.
+          COUNT="$(find artifact -maxdepth 1 -name '*.tgz' | wc -l | tr -d ' ')"
+          if [ "$COUNT" != "1" ]; then
+            echo "::error::Expected exactly one tarball in artifact/, found $COUNT"
+            exit 1
+          fi
+          # Absolute path: npm treats a bare "dir/file.tgz" arg as a GitHub
+          # owner/repo shorthand and tries to git-clone it. A leading "/" forces
+          # it to resolve as a local tarball file.
+          TARBALL="$PWD/artifact/$TARBALL_NAME"
+          if [ ! -f "$TARBALL" ]; then
+            echo "::error::Tarball $TARBALL not found"
+            exit 1
+          fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            npm publish --access public --dry-run "$TARBALL"
+          else
+            npm publish --access public "$TARBALL"
+          fi

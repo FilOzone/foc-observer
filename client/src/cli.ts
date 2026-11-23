@@ -19,6 +19,7 @@ import { callTool, callToolAndClose, configureMcpUrl, createMcpClient } from "./
 import { serveProxy } from "./mcp-proxy.js"
 import { escapeTerminalText, formatTerminalValue, stringifyTerminalSafeJson } from "./terminal.js"
 import { listProviderPages, type ProviderPageResult } from "./provider-pages.js"
+import { VERSION } from "./version.js"
 
 type NetworkName = "calibnet" | "mainnet"
 
@@ -45,7 +46,7 @@ const AFFIRM = { i_have_read_the_system_context: true }
 program
   .name("foc-observer")
   .description("FOC observability - MCP server and CLI for querying Filecoin Onchain Cloud data")
-  .version("0.0.1")
+  .version(VERSION)
   .option("--api-url <url>", "foc-observer server URL (overrides FOC_API_URL env var)")
 
 // Configure MCP URL from global --api-url option before any command runs

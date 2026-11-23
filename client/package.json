@@ -16,7 +16,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FilOzone/foc-observer.git"
+    "url": "git+https://github.com/FilOzone/foc-observer.git",
+    "directory": "client"
   },
   "bugs": {
     "url": "https://github.com/FilOzone/foc-observer/issues"
@@ -39,5 +40,8 @@
     "@types/node": "^26.0.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }
