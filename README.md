@@ -116,7 +116,7 @@ A deployment serves an unauthenticated public API: anyone who can reach it can r
 **Layers.**
 
 1. **SQL validator** (`server/src/sql-validator.ts`). Parses each query with the Postgres parser and accepts only allow-listed statements, syntax, functions, types and tables. The server's own queries pass through it too, with caller values bound as parameters.
-2. **Database role** `foc_observer_query`. `SELECT` on the published views in `public`, granted by name from `postgres/bootstrap.sql`, plus the catalog metadata every Postgres role can read. It can't write, create objects, read Ponder's `data_v*` or `ponder_sync` schemas, or use file and program functions. The server checks the role at startup and exits if it can do more.
+2. **Database role** `foc_observer_query`. `SELECT` on the published views in `public`, granted by name from `postgres/bootstrap.sql`, plus the catalog metadata every Postgres role can read. It can't write, create objects, read Ponder's `data_v*` or RPC cache schemas, or use file and program functions. The server checks the role at startup and exits if it can do more.
 
 ### Deployment requirements
 

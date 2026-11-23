@@ -20,7 +20,7 @@
   "dependencies": {
     "hono": "^4.13",
     "multiformats": "^14",
-    "ponder": "npm:@filoz/ponder@0.17.4-filecoin.4",
+    "ponder": "npm:@filoz/ponder@0.18.9-filecoin.1",
     "viem": "^2.57"
   },
   "overrides": {
