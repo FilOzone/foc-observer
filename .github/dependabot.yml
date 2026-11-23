@@ -22,7 +22,6 @@ updates:
 
   - package-ecosystem: npm
     directories:
-      - /client
       - /server
       - /indexer
     schedule:
@@ -30,6 +29,24 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # The published client releases on fix commits, so runtime dependency updates
+  # use fix(deps) and ship; dev dependency updates stay chore(deps-dev).
+  - package-ecosystem: npm
+    directory: /client
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: fix
+      prefix-development: chore
+      include: scope
     groups:
       npm-minor-patch:
         patterns: ["*"]

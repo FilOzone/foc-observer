@@ -6,6 +6,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { VERSION } from "./version.js"
 
 let configuredMcpUrl: string | undefined
 
@@ -26,7 +27,7 @@ export async function createMcpClient(mcpUrl?: string): Promise<Client> {
   if (!url) throw new Error("FOC_API_URL environment variable is required")
 
   const transport = new StreamableHTTPClientTransport(new URL(url))
-  const client = new Client({ name: "foc-observer-cli", version: "0.0.1" })
+  const client = new Client({ name: "foc-observer-cli", version: VERSION })
   await client.connect(transport)
   return client
 }

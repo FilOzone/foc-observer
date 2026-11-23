@@ -3,14 +3,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import { VERSION } from "./version.js"
 
 export async function serveProxy(mcpUrl: string): Promise<void> {
   const remoteTransport = new StreamableHTTPClientTransport(new URL(mcpUrl))
-  const remoteClient = new Client({ name: "foc-observer-proxy", version: "0.0.1" })
+  const remoteClient = new Client({ name: "foc-observer-proxy", version: VERSION })
   await remoteClient.connect(remoteTransport)
 
   // Forward the remote JSON schemas verbatim, including optional parameters and enums.
-  const localServer = new Server({ name: "foc-observer", version: "0.0.1" }, {
+  const localServer = new Server({ name: "foc-observer", version: VERSION }, {
     capabilities: { tools: {} },
     instructions: remoteClient.getInstructions(),
   })

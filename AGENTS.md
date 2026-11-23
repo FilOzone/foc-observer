@@ -88,6 +88,10 @@ Iterate with the smallest relevant test, and report the checks you didn't run.
 
 Follow the [single-network reindex runbook](REINDEX.md) for preflight, checkpoints, cutover, API verification and rollback. The [example override](compose.reindex.example.yaml) runs the candidate image without the live checkout's bind mounts.
 
+### Client releases
+
+`@filoz/foc-observer` releases through release-please (`.github/release-please-config.json`, `.github/workflows/release-please.yml`). Only commits that touch `client/` count: `feat` bumps the minor version, `fix` the patch, and other types appear in the changelog without releasing, so give client changes an accurate type. Merging the release PR tags `foc-observer-vX.Y.Z` and publishes through npm trusted publishing. Release-please owns the version in `client/package.json` and `client/CHANGELOG.md`; don't edit them by hand. Dispatching the workflow on a release tag republishes a release whose publish job failed.
+
 ## Logging
 
 `logger.ts` writes JSON lines to stdout. Compose rotates the server logs. `mcp` records tool, duration and result size. Successful `sql` entries include up to 2,000 query characters and UTF-8 sizes for the compact SQL result (`resultBytes`) and its largest row (`maxRowBytes`). Limit failures record `limitHit`; failed queries omit SQL text. `rest` records method, route pattern and status. `backend` records sanitized diagnostics. Under backpressure the logger drops entries rather than buffering them.
