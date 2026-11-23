@@ -1,0 +1,13 @@
+# Add to the deployment's Compose file list only while building the new schema.
+services:
+  reindex:
+    extends:
+      file: docker-compose.yml
+      service: ponder-${REINDEX_NETWORK:?set REINDEX_NETWORK to calibnet or mainnet}
+    image: ${REINDEX_IMAGE:?set REINDEX_IMAGE to the locally built candidate image}
+    build: !reset null
+    volumes: !reset []
+    pull_policy: never
+    restart: "no"
+    command: ["npm", "start", "--", "--schema", "${REINDEX_SCHEMA:?set REINDEX_SCHEMA to a fresh data schema}"]
+    profiles: [reindex]

@@ -241,16 +241,9 @@ Host network (lotus-proxy only):
 
 The server and indexer containers run as the unprivileged `node` user. The server also calls the Goldsky subgraph, DealBot and BetterStack over HTTPS.
 
-### Re-indexing (zero-downtime schema changes)
+### Re-indexing
 
-Each indexer writes its tables to a named schema (`<NETWORK>_DATA_SCHEMA`, default `data_v1`) and creates views over them in `public`, which is all the server queries. A schema or handler change needs a full re-index, built alongside the live schema while it keeps serving:
-
-1. Add a temporary `ponder-<network>-reindex` service in a Compose override file, running `--schema data_vN` (no `--views-schema`) against the same Postgres.
-2. Let it catch up. It shares the `ponder_sync` chain cache, so code-only changes re-index locally at high speed; new contracts, new events and earlier start blocks need RPC for the uncovered range.
-3. Cut over: stop the live indexer, drop and recreate `public`, bump `<NETWORK>_DATA_SCHEMA`, remove the reindex container, start the live indexer (it recreates the views), and run `docker compose up -d foc-observer` to reapply the query-role grants.
-4. Drop the old schema when satisfied.
-
-The live indexers volume-mount `indexer/src`, `indexer/abis` and `indexer/ponder.schema.ts` from this checkout, so they run whatever it holds the next time they restart, for any reason. Ponder won't resume a schema built by different indexing code (`... was previously used by a different Ponder app`), and the indexer stays down until the code matches. Keep the deployment checkout on the code its live schemas were built from, develop elsewhere, and mount a reindex service from a checkout of the new code rather than `./indexer`.
+Follow the [single-network reindex runbook](REINDEX.md) and its [worked Compose override](compose.reindex.example.yaml). It builds alongside the live schema, checks both at a common finalized block, then promotes the tested image on that network only. The runbook covers API verification and switching back to the retained schema and code.
 
 ### Client (`@filoz/foc-observer`)
 
