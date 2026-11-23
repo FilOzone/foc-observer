@@ -1,17 +1,27 @@
 /**
  * Live integration tests against Ponder Postgres on calibnet.
- * Requires Ponder running with Postgres on localhost:5433.
+ * Requires FOC_CALIBNET_QUERY_DATABASE_URL naming the foc_observer_query role.
  * Run with: npm run test:live
  */
 
-import { describe, expect, test, afterAll } from "vitest"
+import { describe, expect, test, afterAll, beforeAll } from "vitest"
 import { PonderClient } from "../src/ponder-client.js"
 import { getNetworkConfig } from "../src/networks.js"
+import { initParser } from "../src/sql-validator.js"
 
 const LIVE = process.env.LIVE_TEST === "1"
 
 describe.skipIf(!LIVE)("PonderClient against calibnet", () => {
-  const client = new PonderClient(getNetworkConfig("calibnet"))
+  let client: PonderClient
+
+  beforeAll(async () => {
+    await initParser()
+    client = new PonderClient(getNetworkConfig("calibnet"))
+  })
+
+  test("the configured role passes the startup check", async () => {
+    expect(await client.checkQueryRole()).toEqual({ role: "foc_observer_query", problems: [] })
+  })
 
   afterAll(async () => {
     await client.close()

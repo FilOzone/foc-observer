@@ -28,11 +28,94 @@ export interface ColumnInfo {
 
 import { TABLES } from "./schema-defs.js"
 
+/** The role provisioned by postgres/provision.sh; the only one the server serves SQL as. */
+export const QUERY_ROLE = "foc_observer_query"
+
+/**
+ * Role attributes read by PonderClient.checkQueryRole. Schema lists exclude pg_* and
+ * information_schema. Names are cast to text because node-postgres leaves name[] unparsed.
+ */
+export interface QueryRoleAttributes {
+  /** The role the connection authenticated as (session_user). */
+  login: string
+  /** The role queries run as (current_user); the privilege fields describe this role. */
+  role: string
+  rolsuper: boolean
+  rolcreaterole: boolean
+  rolcreatedb: boolean
+  rolreplication: boolean
+  rolbypassrls: boolean
+  db_create: boolean
+  db_temp: boolean
+  /** Roles this role is a direct member of, built-in or custom. */
+  member_of: string[]
+  /** Schemas where the role can create objects. */
+  create_schemas: string[]
+  /** Schemas other than public that the role can use. */
+  usage_schemas: string[]
+  /** Schemas holding a relation the role owns or can write to, at table or column level. */
+  write_schemas: string[]
+}
+
+const QUERY_ROLE_SQL = `
+  WITH app_schemas AS (
+    SELECT oid, nspname FROM pg_namespace
+    WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema'
+  )
+  SELECT session_user::text AS login, r.rolname::text AS role, r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolbypassrls,
+    has_database_privilege(current_database(), 'CREATE') AS db_create,
+    has_database_privilege(current_database(), 'TEMPORARY') AS db_temp,
+    ARRAY(
+      SELECT g.rolname::text FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+      WHERE m.member = r.oid ORDER BY 1
+    ) AS member_of,
+    ARRAY(SELECT nspname::text FROM app_schemas WHERE has_schema_privilege(oid, 'CREATE') ORDER BY 1) AS create_schemas,
+    ARRAY(
+      SELECT nspname::text FROM app_schemas WHERE nspname <> 'public' AND has_schema_privilege(oid, 'USAGE') ORDER BY 1
+    ) AS usage_schemas,
+    ARRAY(
+      SELECT DISTINCT s.nspname::text FROM pg_class c JOIN app_schemas s ON s.oid = c.relnamespace
+      WHERE c.relowner = r.oid
+        OR (c.relkind IN ('r', 'v', 'm', 'p', 'f')
+          AND (has_table_privilege(c.oid, 'DELETE, TRUNCATE, TRIGGER')
+            OR has_any_column_privilege(c.oid, 'INSERT, UPDATE')))
+        OR (c.relkind = 'S' AND has_sequence_privilege(c.oid, 'USAGE, UPDATE'))
+      ORDER BY 1
+    ) AS write_schemas
+  FROM pg_roles r
+  WHERE r.rolname = current_user`
+
+/** What makes a role unsafe for serving caller SQL; empty for the provisioned query role. */
+export function queryRoleProblems(attrs: QueryRoleAttributes): string[] {
+  const problems: string[] = []
+  // A login other than the query role means the server holds other credentials,
+  // even when the session has switched to the query role.
+  if (attrs.login !== QUERY_ROLE) problems.push(`logged in as "${attrs.login}", not ${QUERY_ROLE}`)
+  else if (attrs.role !== QUERY_ROLE) problems.push(`queries run as "${attrs.role}", not ${QUERY_ROLE}`)
+  if (attrs.rolsuper) problems.push("superuser")
+  if (attrs.rolcreaterole) problems.push("CREATEROLE")
+  if (attrs.rolcreatedb) problems.push("CREATEDB")
+  if (attrs.rolreplication) problems.push("REPLICATION")
+  if (attrs.rolbypassrls) problems.push("BYPASSRLS")
+  if (attrs.db_create) problems.push("CREATE on the database")
+  if (attrs.db_temp) problems.push("TEMPORARY on the database")
+  if (attrs.member_of.length > 0) problems.push(`member of ${attrs.member_of.join(", ")}`)
+  if (attrs.create_schemas.length > 0) problems.push(`CREATE on schema ${attrs.create_schemas.join(", ")}`)
+  if (attrs.usage_schemas.length > 0) problems.push(`USAGE on schema ${attrs.usage_schemas.join(", ")}`)
+  if (attrs.write_schemas.length > 0) problems.push(`owns or can modify relations in ${attrs.write_schemas.join(", ")}`)
+  return problems
+}
+
 export class PonderClient {
   readonly network: NetworkConfig
   private queryPool: pg.Pool
 
   constructor(network: NetworkConfig) {
+    if (!network.queryDatabaseUrl) {
+      throw new Error(
+        `FOC_${network.name.toUpperCase()}_QUERY_DATABASE_URL is not set. Point it at the restricted ${QUERY_ROLE} role.`,
+      )
+    }
     this.network = network
     this.queryPool = new pg.Pool({
       connectionString: network.queryDatabaseUrl,
@@ -41,18 +124,31 @@ export class PonderClient {
     })
   }
 
+  /** The connected query role and anything that makes it unsafe for serving caller SQL. */
+  async checkQueryRole(): Promise<{ role: string; problems: string[] }> {
+    const { rows } = await this.queryPool.query(QUERY_ROLE_SQL)
+    const attrs = rows[0] as QueryRoleAttributes | undefined
+    if (!attrs) throw new Error("The query role is missing from pg_roles.")
+    return { role: attrs.role, problems: queryRoleProblems(attrs) }
+  }
+
   /** @deprecated Use validateSql from sql-validator.ts directly */
   static validateSql = validateSql
 
   static readonly MAX_ROWS = MAX_ROWS
 
-  /** Internal query with SqlResult shape, bypasses validation, for server-side use only. */
-  async queryInternal(sql: string): Promise<SqlResult> {
+  /**
+   * Server-side query. Passes the same validator as caller SQL; values travel as
+   * bound parameters ($1, $2, ...), never as query text. Unlike querySql there is
+   * no row cap.
+   */
+  async queryInternal(rawSql: string, params: ReadonlyArray<string | number> = []): Promise<SqlResult> {
+    const { sql } = validateSql(rawSql)
     const client = await this.queryPool.connect()
     try {
       await client.query("BEGIN TRANSACTION READ ONLY")
       await client.query("SET LOCAL search_path TO public")
-      const result = await client.query(sql)
+      const result = await client.query(sql, [...params])
       await client.query("COMMIT")
       const columns = result.fields.map((f) => f.name)
       const rows = result.rows as Record<string, unknown>[]

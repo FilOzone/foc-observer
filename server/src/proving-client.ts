@@ -14,7 +14,18 @@
  * so it works for any listener contract (FWSS=2880, Storacha=2880, calibnet=240, future configs).
  */
 
+import { parseAddress, parseSetId, parseWeeks } from "./inputs.js"
 import type { PonderClient } from "./ponder-client.js"
+
+// The proving CTE's filter, keyed so caller input never reaches query text.
+// Filtered variants bind the provider address or set ID as $1.
+const PROVING_FILTERS = {
+  all: "",
+  provider: "WHERE LOWER(d.storage_provider) = $1",
+  dataset: "WHERE n.set_id = $1",
+} as const
+
+type ProvingFilter = keyof typeof PROVING_FILTERS
 
 export interface ProvingProvider {
   address: string
@@ -58,8 +69,8 @@ export class ProvingClient {
     this.ponder = ponder
   }
 
-  private async sql(query: string): Promise<Record<string, unknown>[]> {
-    const result = await this.ponder.queryInternal(query)
+  private async sql(query: string, params: ReadonlyArray<string | number> = []): Promise<Record<string, unknown>[]> {
+    const result = await this.ponder.queryInternal(query, params)
     return result.rows as Record<string, unknown>[]
   }
 
@@ -71,7 +82,7 @@ export class ProvingClient {
    * 3. Extra periods beyond 1 are inferred skipped faults
    * 4. The observed period is faulted if no proof exists in the window
    */
-  private provingCTE(whereClause: string): string {
+  private provingCTE(filter: ProvingFilter): string {
     return `
       WITH raw_periods AS (
         SELECT
@@ -83,7 +94,7 @@ export class ProvingClient {
           d.storage_provider
         FROM pdp_next_proving_period n
         JOIN pdp_data_set_created d ON n.set_id = d.set_id
-        ${whereClause}
+        ${PROVING_FILTERS[filter]}
       ),
       gaps AS (
         SELECT set_id, block_number - prev_block as gap
@@ -124,7 +135,7 @@ export class ProvingClient {
 
   async getProviders(): Promise<ProvingProvider[]> {
     const rows = await this.sql(`
-      ${this.provingCTE("")}
+      ${this.provingCTE("all")}
       SELECT
         c.storage_provider as address,
         SUM(c.periods_in_gap)::int as total_periods,
@@ -152,10 +163,10 @@ export class ProvingClient {
       LEFT JOIN pdp_data_set_deleted del ON d.set_id = del.set_id
       LEFT JOIN pdp_data_set_empty emp ON d.set_id = emp.set_id
       LEFT JOIN (
-        SELECT DISTINCT set_id FROM pdp_next_proving_period WHERE timestamp > ${staleCutoff}
+        SELECT DISTINCT set_id FROM pdp_next_proving_period WHERE timestamp > $1
       ) recent ON d.set_id = recent.set_id
       GROUP BY d.storage_provider
-    `)
+    `, [staleCutoff])
     const dsMap = new Map<string, { total: number; active: number }>()
     for (const r of dsRows) {
       dsMap.set(String(r.address).toLowerCase(), {
@@ -182,21 +193,21 @@ export class ProvingClient {
   }
 
   async getProviderHealth(address: string, weeks: number = 4): Promise<ProviderProvingHealth | null> {
-    const addr = address.toLowerCase()
-    const where = `WHERE LOWER(d.storage_provider) = '${addr}'`
+    const addr = parseAddress(address)
+    const weekCount = parseWeeks(weeks)
 
     // All-time stats
     const statsRows = await this.sql(`
-      ${this.provingCTE(where)}
+      ${this.provingCTE("provider")}
       SELECT
         SUM(periods_in_gap)::int as total_periods,
         (SUM(CASE WHEN periods_in_gap > 1 THEN periods_in_gap - 1 ELSE 0 END)
          + COUNT(CASE WHEN observed_fault AND prev_block IS NOT NULL THEN 1 END))::int as faulted_periods
       FROM classified
-    `)
+    `, [addr])
     const stats = statsRows[0]
     if (!stats || Number(stats.total_periods) === 0) {
-      const exists = await this.sql(`SELECT set_id FROM pdp_data_set_created WHERE LOWER(storage_provider) = '${addr}' LIMIT 1`)
+      const exists = await this.sql(`SELECT set_id FROM pdp_data_set_created WHERE LOWER(storage_provider) = $1 LIMIT 1`, [addr])
       if (exists.length === 0) return null
     }
 
@@ -214,42 +225,42 @@ export class ProvingClient {
       LEFT JOIN pdp_data_set_deleted del ON d.set_id = del.set_id
       LEFT JOIN pdp_data_set_empty emp ON d.set_id = emp.set_id
       LEFT JOIN (
-        SELECT DISTINCT set_id FROM pdp_next_proving_period WHERE timestamp > ${staleCutoff}
+        SELECT DISTINCT set_id FROM pdp_next_proving_period WHERE timestamp > $2
       ) recent ON d.set_id = recent.set_id
-      WHERE LOWER(d.storage_provider) = '${addr}'
-    `)
+      WHERE LOWER(d.storage_provider) = $1
+    `, [addr, staleCutoff])
     const ds = dsRows[0] ?? { total_datasets: 0, active_datasets: 0 }
     const totalPeriods = Number(stats?.total_periods ?? 0)
     const totalFaults = Number(stats?.faulted_periods ?? 0)
 
     // Weekly breakdown
-    const cutoff = Math.floor(Date.now() / 1000) - weeks * 7 * 86400
+    const cutoff = Math.floor(Date.now() / 1000) - weekCount * 7 * 86400
     const weeklyRows = await this.sql(`
-      ${this.provingCTE(where)}
+      ${this.provingCTE("provider")}
       SELECT
         DATE_TRUNC('week', TO_TIMESTAMP(timestamp)) as week,
         SUM(periods_in_gap)::int as periods,
         (SUM(CASE WHEN periods_in_gap > 1 THEN periods_in_gap - 1 ELSE 0 END)
          + COUNT(CASE WHEN observed_fault AND prev_block IS NOT NULL THEN 1 END))::int as faults
       FROM classified
-      WHERE timestamp > ${cutoff}
+      WHERE timestamp > $2
       GROUP BY week ORDER BY week DESC
-    `)
+    `, [addr, cutoff])
 
     const dsActivity = await this.sql(`
       SELECT DATE_TRUNC('week', TO_TIMESTAMP(timestamp)) as week, COUNT(*) as n
-      FROM pdp_data_set_created WHERE LOWER(storage_provider) = '${addr}' AND timestamp > ${cutoff}
+      FROM pdp_data_set_created WHERE LOWER(storage_provider) = $1 AND timestamp > $2
       GROUP BY week
-    `)
+    `, [addr, cutoff])
     const dsActMap = new Map<string, number>()
     for (const r of dsActivity) dsActMap.set(String(r.week), Number(r.n))
 
     const pieceActivity = await this.sql(`
       SELECT DATE_TRUNC('week', TO_TIMESTAMP(p.timestamp)) as week, COUNT(*) as n
       FROM pdp_pieces_added p JOIN pdp_data_set_created d ON p.set_id = d.set_id
-      WHERE LOWER(d.storage_provider) = '${addr}' AND p.timestamp > ${cutoff}
+      WHERE LOWER(d.storage_provider) = $1 AND p.timestamp > $2
       GROUP BY week
-    `)
+    `, [addr, cutoff])
     const pieceMap = new Map<string, number>()
     for (const r of pieceActivity) pieceMap.set(String(r.week), Number(r.n))
 
@@ -269,7 +280,7 @@ export class ProvingClient {
 
     // Per-dataset status
     const datasetRows = await this.sql(`
-      ${this.provingCTE(where)}
+      ${this.provingCTE("provider")}
       SELECT
         set_id,
         MAX(proving_period)::int as proving_period,
@@ -279,15 +290,15 @@ export class ProvingClient {
         MAX(timestamp) as last_period_ts
       FROM classified
       GROUP BY set_id ORDER BY set_id
-    `)
+    `, [addr])
 
     const proofRows = await this.sql(`
       SELECT pr.set_id, MAX(pr.timestamp) as last_proof_ts
       FROM pdp_possession_proven pr
       JOIN pdp_data_set_created d ON pr.set_id = d.set_id
-      WHERE LOWER(d.storage_provider) = '${addr}'
+      WHERE LOWER(d.storage_provider) = $1
       GROUP BY pr.set_id
-    `)
+    `, [addr])
     const proofMap = new Map<string, string>()
     for (const r of proofRows) proofMap.set(String(r.set_id), String(r.last_proof_ts))
 
@@ -323,8 +334,9 @@ export class ProvingClient {
   }
 
   async getDataset(setId: string): Promise<ProvingDataSet | null> {
+    const id = parseSetId(setId)
     const rows = await this.sql(`
-      ${this.provingCTE(`WHERE n.set_id = ${setId}`)}
+      ${this.provingCTE("dataset")}
       SELECT
         set_id,
         MAX(proving_period)::int as proving_period,
@@ -334,14 +346,14 @@ export class ProvingClient {
         MAX(timestamp) as last_period_ts
       FROM classified
       GROUP BY set_id
-    `)
+    `, [id])
 
     if (rows.length === 0) return null
     const r = rows[0]
 
     const proofRows = await this.sql(`
-      SELECT MAX(timestamp) as last_proof_ts FROM pdp_possession_proven WHERE set_id = ${setId}
-    `)
+      SELECT MAX(timestamp) as last_proof_ts FROM pdp_possession_proven WHERE set_id = $1
+    `, [id])
 
     const total = Number(r.total_periods)
     const faults = Number(r.faulted_periods)

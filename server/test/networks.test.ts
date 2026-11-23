@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { getNetworkConfig, resolveNetworkFromEnv, ALL_NETWORKS } from "../src/networks.js"
 
 describe("getNetworkConfig", () => {
@@ -16,20 +16,20 @@ describe("getNetworkConfig", () => {
 
   test("overrides replace defaults", () => {
     const config = getNetworkConfig("calibnet", {
-      databaseUrl: "postgres://admin@custom:1234/db",
       queryDatabaseUrl: "postgres://reader@custom:1234/db",
       rpcUrl: "http://custom:5678/rpc/v1",
     })
-    expect(config.databaseUrl).toBe("postgres://admin@custom:1234/db")
     expect(config.queryDatabaseUrl).toBe("postgres://reader@custom:1234/db")
     expect(config.rpcUrl).toBe("http://custom:5678/rpc/v1")
   })
 
-  test("query connections fall back to the primary database", () => {
-    const config = getNetworkConfig("calibnet", {
-      databaseUrl: "postgres://admin@custom:1234/db",
-    })
-    expect(config.queryDatabaseUrl).toBe("postgres://admin@custom:1234/db")
+  test("the query database URL has no default", () => {
+    vi.stubEnv("FOC_CALIBNET_QUERY_DATABASE_URL", undefined)
+    expect(getNetworkConfig("calibnet").queryDatabaseUrl).toBeUndefined()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   test("contract addresses are present for all networks", () => {

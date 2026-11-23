@@ -113,8 +113,11 @@ services:
         condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Loopback by default, for a reverse proxy on this host. A remote proxy needs
+    # FOC_SERVER_BIND set to an interface address and a firewall that admits only
+    # the proxy; otherwise callers bypass its TLS and rate limits.
     ports:
-      - "${FOC_SERVER_PORT:?}:${FOC_SERVER_PORT:?}"
+      - "${FOC_SERVER_BIND:-127.0.0.1}:${FOC_SERVER_PORT:?}:${FOC_SERVER_PORT:?}"
     environment:
       FOC_SERVER_PORT: ${FOC_SERVER_PORT:?}
       FOC_API_URL: ${FOC_API_URL:?}
