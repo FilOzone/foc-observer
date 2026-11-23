@@ -12,6 +12,7 @@ import { getNetworkConfig } from "../src/networks.js"
 import type { PonderClient } from "../src/ponder-client.js"
 import type { ContractReader } from "../src/contract-reader.js"
 import type { NetworkName } from "../src/networks.js"
+import { resolveSystemContext } from "../src/system-context.js"
 
 // resolveSystemContext needs this
 beforeAll(() => {
@@ -94,18 +95,14 @@ describe("MCP expected tools", () => {
 })
 
 describe("system context resolution", () => {
-  test("resolveSystemContext substitutes URL", async () => {
-    const { resolveSystemContext } = await import("../src/system-context.js")
-    const { instructions, systemContext } = resolveSystemContext("https://example.com")
-    expect(instructions).toContain("FOC")
+  test("resolveSystemContext substitutes URLs throughout the full guide", async () => {
+    const { instructions, systemContext } = resolveSystemContext("https://example.com/")
     expect(instructions).not.toContain("{{BASE_URL}}")
-    expect(systemContext).toContain("https://example.com")
     expect(systemContext).not.toContain("{{BASE_URL}}")
+    expect(systemContext).toContain("https://example.com/sql")
   })
 
   test("resolveSystemContext uses FOC_API_URL env var", async () => {
-    const { resolveSystemContext } = await import("../src/system-context.js")
-    const { systemContext } = resolveSystemContext()
-    expect(systemContext).toContain("https://test.example.com")
+    expect(resolveSystemContext().systemContext).toContain("https://test.example.com")
   })
 })

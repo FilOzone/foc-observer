@@ -1,11 +1,65 @@
 [
   {
-    "_comment": "Removed from the FWSS source in v1.3.0 (pricing is now per-dataset, captured at create-time). Retained here so Ponder still subscribes to it - needed (a) to keep indexing mainnet v1.2.1 emissions until that network upgrades, and (b) to backfill historical pre-v1.3.0 PricingUpdated rows on any reindex-from-genesis (Ponder skips events not in the ABI). Only safe to remove once no indexed deployment will ever need its pre-v1.3.0 history reconstructed.",
+    "_comment": "Historical FWSS and Storacha proxy events absent from filecoin-services v1.6. SelectorDelegated is declared by wjmelements/erc8167 at 44b41a1a94a491b54920ae8dd3c16aa974b6bf09.",
+    "type": "event",
+    "name": "CDNPaymentTerminated",
+    "inputs": [
+      { "name": "dataSetId", "type": "uint256", "indexed": true, "internalType": "uint256" },
+      { "name": "endEpoch", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "cacheMissRailId", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "cdnRailId", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ContractUpgraded",
+    "inputs": [
+      { "name": "version", "type": "string", "indexed": false, "internalType": "string" },
+      { "name": "implementation", "type": "address", "indexed": false, "internalType": "address" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FilecoinServiceDeployed",
+    "inputs": [
+      { "name": "name", "type": "string", "indexed": false, "internalType": "string" },
+      { "name": "description", "type": "string", "indexed": false, "internalType": "string" }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "event",
     "name": "PricingUpdated",
     "inputs": [
       { "name": "storagePrice", "type": "uint256", "indexed": false, "internalType": "uint256" },
       { "name": "minimumRate", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Upgraded",
+    "inputs": [
+      { "name": "implementation", "type": "address", "indexed": true, "internalType": "address" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ViewContractSet",
+    "inputs": [
+      { "name": "viewContract", "type": "address", "indexed": true, "internalType": "address" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SelectorDelegated",
+    "inputs": [
+      { "name": "selector", "type": "bytes4", "indexed": true, "internalType": "bytes4" },
+      { "name": "delegate", "type": "address", "indexed": true, "internalType": "address" }
     ],
     "anonymous": false
   }

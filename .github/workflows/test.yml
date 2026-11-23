@@ -58,6 +58,7 @@ jobs:
       - run: npm test
         env:
           ROLE_CHECK_DATABASE_URL: postgres://postgres:role-check-admin@localhost:5432/postgres
+          PROVING_QUERY_DATABASE_URL: postgres://postgres:role-check-admin@localhost:5432/postgres
 
   indexer:
     name: indexer

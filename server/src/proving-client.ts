@@ -17,13 +17,34 @@
 import { parseAddress, parseSetId, parseWeeks } from "./inputs.js"
 import type { PonderClient } from "./ponder-client.js"
 
-// The proving CTE's filter, keyed so caller input never reaches query text.
-// Filtered variants bind the provider address or set ID as $1.
 const PROVING_FILTERS = {
   all: "",
   provider: "WHERE LOWER(d.storage_provider) = $1",
   dataset: "WHERE n.set_id = $1",
 } as const
+
+const ACTIVE_DATASETS_QUERY = `
+  WITH recent_periods AS (
+    SELECT DISTINCT ON (set_id) set_id, leaf_count
+    FROM pdp_next_proving_period
+    WHERE timestamp > $2
+    ORDER BY set_id, block_number DESC, SPLIT_PART(id, '-', 2)::int DESC
+  )
+  SELECT
+    d.storage_provider as address,
+    COUNT(DISTINCT d.set_id) as total_datasets,
+    COUNT(DISTINCT CASE
+      WHEN recent.leaf_count > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM pdp_data_set_deleted terminal WHERE terminal.set_id = d.set_id
+        )
+      THEN d.set_id
+    END) as active_datasets
+  FROM pdp_data_set_created d
+  LEFT JOIN recent_periods recent ON d.set_id = recent.set_id
+  WHERE ($1::text IS NULL OR d.storage_provider = $1)
+  GROUP BY d.storage_provider
+`
 
 type ProvingFilter = keyof typeof PROVING_FILTERS
 
@@ -69,7 +90,12 @@ export class ProvingClient {
     this.ponder = ponder
   }
 
-  private async sql(query: string, params: ReadonlyArray<string | number> = []): Promise<Record<string, unknown>[]> {
+  private recentProvingCutoff(): number {
+    const { provingPeriodEpochs, epochDurationSeconds } = this.ponder.network
+    return Math.floor(Date.now() / 1000) - 3 * provingPeriodEpochs * epochDurationSeconds
+  }
+
+  private async sql(query: string, params: ReadonlyArray<string | number | null> = []): Promise<Record<string, unknown>[]> {
     const result = await this.ponder.queryInternal(query, params)
     return result.rows as Record<string, unknown>[]
   }
@@ -146,27 +172,7 @@ export class ProvingClient {
       ORDER BY total_periods DESC
     `)
 
-    // Dataset counts: "active" means not deleted, not emptied, and has proved in last 3 proving periods
-    // This avoids the subgraph's isActive inflation problem
-    const staleCutoff = Math.floor(Date.now() / 1000) - 3 * 86400
-    const dsRows = await this.sql(`
-      SELECT
-        d.storage_provider as address,
-        COUNT(DISTINCT d.set_id) as total_datasets,
-        COUNT(DISTINCT CASE
-          WHEN del.set_id IS NOT NULL THEN NULL
-          WHEN emp.set_id IS NOT NULL THEN NULL
-          WHEN recent.set_id IS NULL THEN NULL
-          ELSE d.set_id
-        END) as active_datasets
-      FROM pdp_data_set_created d
-      LEFT JOIN pdp_data_set_deleted del ON d.set_id = del.set_id
-      LEFT JOIN pdp_data_set_empty emp ON d.set_id = emp.set_id
-      LEFT JOIN (
-        SELECT DISTINCT set_id FROM pdp_next_proving_period WHERE timestamp > $1
-      ) recent ON d.set_id = recent.set_id
-      GROUP BY d.storage_provider
-    `, [staleCutoff])
+    const dsRows = await this.sql(ACTIVE_DATASETS_QUERY, [null, this.recentProvingCutoff()])
     const dsMap = new Map<string, { total: number; active: number }>()
     for (const r of dsRows) {
       dsMap.set(String(r.address).toLowerCase(), {
@@ -211,24 +217,7 @@ export class ProvingClient {
       if (exists.length === 0) return null
     }
 
-    const staleCutoff = Math.floor(Date.now() / 1000) - 3 * 86400
-    const dsRows = await this.sql(`
-      SELECT
-        COUNT(DISTINCT d.set_id) as total_datasets,
-        COUNT(DISTINCT CASE
-          WHEN del.set_id IS NOT NULL THEN NULL
-          WHEN emp.set_id IS NOT NULL THEN NULL
-          WHEN recent.set_id IS NULL THEN NULL
-          ELSE d.set_id
-        END) as active_datasets
-      FROM pdp_data_set_created d
-      LEFT JOIN pdp_data_set_deleted del ON d.set_id = del.set_id
-      LEFT JOIN pdp_data_set_empty emp ON d.set_id = emp.set_id
-      LEFT JOIN (
-        SELECT DISTINCT set_id FROM pdp_next_proving_period WHERE timestamp > $2
-      ) recent ON d.set_id = recent.set_id
-      WHERE LOWER(d.storage_provider) = $1
-    `, [addr, staleCutoff])
+    const dsRows = await this.sql(ACTIVE_DATASETS_QUERY, [addr, this.recentProvingCutoff()])
     const ds = dsRows[0] ?? { total_datasets: 0, active_datasets: 0 }
     const totalPeriods = Number(stats?.total_periods ?? 0)
     const totalFaults = Number(stats?.faulted_periods ?? 0)

@@ -23,6 +23,22 @@ export function eventMeta(event: {
   }
 }
 
+export function storageTermsSelectionRow(event: {
+  args: { dataSetId: bigint; storageTermsId: Hex }
+  log: { logIndex: number }
+  block: { hash: string; number: bigint; timestamp: bigint }
+  transaction: { hash: string }
+}) {
+  const { dataSetId, storageTermsId } = event.args
+  return {
+    id: eventId(event),
+    dataSetId,
+    storageTermsId,
+    logIndex: event.log.logIndex,
+    ...eventMeta(event),
+  }
+}
+
 /**
  * tx_meta row for the transaction carrying an event. status is hex text
  * ('0x1' success, '0x0' revert) to match eth_getTransactionReceipt.

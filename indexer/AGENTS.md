@@ -53,10 +53,12 @@ ponder.on("PDPVerifier:DataSetDeleted", async ({ event, context }) => {
 
 ## ABIs
 
-`scripts/generate-abis.sh` fetches published ABIs from [filecoin-services](https://github.com/FilOzone/filecoin-services) at a pinned ref (or the one passed). The FWSS ABI it writes is a union:
+`scripts/generate-abis.sh` fetches published ABIs from [filecoin-services](https://github.com/FilOzone/filecoin-services) at the pinned deployed v1.6 commit, or a single ref passed to the script. It fails before changing generated files if any ABI can't be fetched, so the generated ABIs always come from one ref.
 
-- events from `abi/Rails.abi.json`, which FWSS's `Rails` library declares and the FWSS proxy emits, but `forge inspect` leaves out of the contract ABI
-- `fwss-extra-events.json`, hand-maintained legacy entries such as `PricingUpdated`, which current source no longer declares but older deployments emit and reindexes backfill
+The FWSS ABI is a union:
+
+- the deployed FWSS ABI, including `DiamondDelegateCall` and the storage-terms events
+- `fwss-extra-events.json`, containing historical FWSS and Storacha events absent from v1.6, plus `SelectorDelegated`, verified against its pinned ERC-8167 source revision
 
 Subscribing to an event a deployment never emits is harmless, so one ABI serves every deployed version.
 

@@ -13,7 +13,7 @@ import { DealbotClient } from "./dealbot-client.js"
 import { BetterStackClient, parseBucket } from "./betterstack-client.js"
 import { SubgraphClient } from "./subgraph-client.js"
 import { ProvingClient } from "./proving-client.js"
-import { InputError } from "./inputs.js"
+import { InputError, parseAddress } from "./inputs.js"
 import type { NetworkName } from "./networks.js"
 import { logRest, logSql } from "./logger.js"
 import { sqlNotices } from "./tripwires.js"
@@ -204,10 +204,11 @@ export function createRoutes(backends: Backends): Hono {
     const ctx = getReader(c.req.param("network"))
     if ("error" in ctx) return c.json(ctx, 400)
     try {
-      const auction = await ctx.reader.getAuctionStatus(c.req.param("token") as `0x${string}`)
+      const token = parseAddress(c.req.param("token")) as `0x${string}`
+      const auction = await ctx.reader.getAuctionStatus(token)
       return c.json({ network: ctx.network, ...auction })
     } catch (err) {
-      return c.json({ network: ctx.network, error: sanitizeError(err) }, 500)
+      return c.json({ network: ctx.network, error: sanitizeError(err) }, errorStatus(err))
     }
   })
 
@@ -216,13 +217,12 @@ export function createRoutes(backends: Backends): Hono {
     const ctx = getReader(c.req.param("network"))
     if ("error" in ctx) return c.json(ctx, 400)
     try {
-      const account = await ctx.reader.getAccount(
-        c.req.param("token") as `0x${string}`,
-        c.req.param("owner") as `0x${string}`,
-      )
+      const token = parseAddress(c.req.param("token")) as `0x${string}`
+      const owner = parseAddress(c.req.param("owner")) as `0x${string}`
+      const account = await ctx.reader.getAccount(token, owner)
       return c.json({ network: ctx.network, ...account })
     } catch (err) {
-      return c.json({ network: ctx.network, error: sanitizeError(err) }, 500)
+      return c.json({ network: ctx.network, error: sanitizeError(err) }, errorStatus(err))
     }
   })
 

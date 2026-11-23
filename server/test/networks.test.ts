@@ -37,10 +37,10 @@ describe("getNetworkConfig", () => {
       const config = getNetworkConfig(name)
       expect(config.contracts.pdpVerifier).toMatch(/^0x[a-fA-F0-9]{40}$/)
       expect(config.contracts.fwss).toMatch(/^0x[a-fA-F0-9]{40}$/)
-      expect(config.contracts.fwssStateView).toMatch(/^0x[a-fA-F0-9]{40}$/)
       expect(config.contracts.filecoinPay).toMatch(/^0x[a-fA-F0-9]{40}$/)
       expect(config.contracts.spRegistry).toMatch(/^0x[a-fA-F0-9]{40}$/)
       expect(config.contracts.sessionKeyRegistry).toMatch(/^0x[a-fA-F0-9]{40}$/)
+      expect("fwssStateView" in config.contracts).toBe(false)
     }
   })
 

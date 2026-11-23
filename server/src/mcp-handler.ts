@@ -11,7 +11,6 @@ import { z } from "zod"
 import type { PonderClient } from "./ponder-client.js"
 import type { ContractReader } from "./contract-reader.js"
 import { DealbotClient } from "./dealbot-client.js"
-import { formatTableList } from "./table-metadata.js"
 import { sqlNotices } from "./tripwires.js"
 import type { BetterStackClient } from "./betterstack-client.js"
 import type { SubgraphClient } from "./subgraph-client.js"
@@ -24,11 +23,13 @@ const networkEnum = z.enum(["calibnet", "mainnet"]).describe(
   "Which Filecoin network to query. Calibnet is the test network (high proving frequency, test data). Mainnet is production (real money, real storage providers).",
 )
 
+
+const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/, "Expected an EVM address.")
 const affirmation = z.preprocess(
   (val) => val === true || val === 1 || (typeof val === "string" && val.toLowerCase() === "true") || val === "1" ? true : val,
   z.literal(true),
 ).describe(
-  "You must call get_system_context first, then set this to true. This confirms you have loaded the FOC protocol knowledge required to correctly interpret results from this tool.",
+  "Set true after reading get_system_context for this analysis.",
 )
 
 function toolResult(data: unknown) {
@@ -102,26 +103,14 @@ export function createMcpServer(
   // -- Knowledge tool --
 
   server.registerTool("get_system_context", {
-    description: `MANDATORY FIRST CALL. Returns complete FOC protocol knowledge required for correct interpretation of all data from this server.
-
-After calling this, you can use the other tools. Most tools require i_have_read_the_system_context: true to confirm you have loaded this context.
-
-Call this exactly once at the start of your work. Do not skip it.`,
+    description: "Start here for Filecoin Onchain Cloud (FOC) questions on mainnet or calibnet: who stores the data, whether uploads or IPFS retrievals work, whether providers prove storage, and what clients pay. Call once before analysis for the protocol guide and worked queries.",
+    inputSchema: {},
   }, logged("get_system_context", async () => toolResult(systemContext)))
 
   // -- Ponder SQL tools --
 
   server.registerTool("query_sql", {
-    description: `Execute read-only SQL against FOC event data indexed from Filecoin contracts by Ponder.
-
-All event tables have: tx_hash, block_number, timestamp. For tx_from, tx_value, gas_used, effective_gas_price: JOIN tx_meta USING (tx_hash). One row per tx in tx_meta.
-Max 10,000 rows per query. System catalogs are blocked.
-
-Tables and key columns:
-${formatTableList()}
-
-Key joins: fwss tables use data_set_id, pdp tables use set_id, these are the same value (JOIN fwss.data_set_id = pdp.set_id). rail_id across fp tables. Link rails to datasets: JOIN fwss_data_set_created.pdp_rail_id = fp_rail_settled.rail_id. Provider names: call get_providers first, then JOIN by provider_id.
-Amounts are bigint but decimals are PER-TOKEN: USDFC/FIL = 18 (1e18), axlUSDC = 6 (1e6). JOIN fp_rail_created.token and scale per token; never divide a mixed-token SUM by a fixed 1e18. Gas in FIL = m.gas_used * m.effective_gas_price / 1e18 (m = tx_meta).`,
+    description: "Analyze Filecoin Onchain Cloud history: storage growth, provider revenue, Filecoin Pay settlements and ARR, FilBeam egress, FIL burns, transaction gas or contract upgrades. Read-only SELECT over indexed events, up to 10,000 rows. Use list_tables and describe_table for the schema.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, sql: z.string().describe("SQL SELECT query to execute") },
   }, logged("query_sql", async ({ network, sql }) => {
     const sqlStart = Date.now()
@@ -137,7 +126,7 @@ Amounts are bigint but decimals are PER-TOKEN: USDFC/FIL = 18 (1e18), axlUSDC = 
   }))
 
   server.registerTool("list_tables", {
-    description: "List all FOC event tables with approximate row counts and descriptions. Row counts are planner estimates (fast, may be slightly stale); use COUNT(*) via query_sql for an exact figure. Tables prefixed by contract: pdp_, fwss_, fp_, spr_, skr_.",
+    description: "Find indexed Filecoin storage, proof, payment and CDN event tables before writing SQL. Row counts are estimates.",
     inputSchema: { network: networkEnum },
   }, logged("list_tables", async ({ network }) => {
     try {
@@ -147,7 +136,7 @@ Amounts are bigint but decimals are PER-TOKEN: USDFC/FIL = 18 (1e18), axlUSDC = 
   }))
 
   server.registerTool("describe_table", {
-    description: "Get column names, types, and nullability for a specific FOC event table.",
+    description: "Get a table's columns, types, nullability and field notes, including token units where known.",
     inputSchema: { network: networkEnum, table: z.string().describe("Table name, e.g. 'fwss_fault_record'") },
   }, logged("describe_table", async ({ network, table }) => {
     try {
@@ -158,7 +147,7 @@ Amounts are bigint but decimals are PER-TOKEN: USDFC/FIL = 18 (1e18), axlUSDC = 
   }))
 
   server.registerTool("get_status", {
-    description: "Check connectivity and report which networks are available with table counts and row totals.",
+    description: "Check which FOC Observer databases are reachable on mainnet and calibnet. Returns table counts and estimated rows, not chain sync height.",
   }, logged("get_status", async () => {
     try {
       const statuses = await Promise.all(
@@ -171,10 +160,7 @@ Amounts are bigint but decimals are PER-TOKEN: USDFC/FIL = 18 (1e18), axlUSDC = 
   // -- Contract state tools --
 
   server.registerTool("get_providers", {
-    description: `List all registered storage providers with approval and endorsement status.
-
-Three tiers: registered (isActive) < approved (isApproved, passes DealBot checks) < endorsed (isEndorsed, curated primary copy targets).
-Call this for provider name resolution instead of calling get_provider repeatedly.`,
+    description: "Which Filecoin warm storage providers are registered, approved or endorsed? List names, IDs, EVM addresses and capabilities. Read approval and endorsement independently; use this list to resolve providers for health queries.",
     inputSchema: { network: networkEnum },
   }, logged("get_providers", async ({ network }) => {
     try {
@@ -184,7 +170,7 @@ Call this for provider name resolution instead of calling get_provider repeatedl
   }))
 
   server.registerTool("get_provider", {
-    description: 'Look up a single storage provider by ID. Prefer get_providers for bulk lookups. Show as "Name (ID)".',
+    description: "Look up one Filecoin warm storage provider by registry ID: name, provider wallet, payee and advertised PDP capabilities. Use get_providers to compare providers.",
     inputSchema: { network: networkEnum, providerId: z.string().describe("Provider ID, e.g. '6'") },
   }, logged("get_provider", async ({ network, providerId }) => {
     try {
@@ -194,7 +180,7 @@ Call this for provider name resolution instead of calling get_provider repeatedl
   }))
 
   server.registerTool("get_dataset", {
-    description: "Look up a FWSS dataset's current state. Returns rails, payer/payee, termination status, and metadata (source, withCDN).",
+    description: "Who stores and pays for this Filecoin warm storage dataset? Read its current FWSS provider, payer, payment rails, termination epoch, metadata and selected storage terms.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, dataSetId: z.string().describe("Dataset ID, e.g. '11141'") },
   }, logged("get_dataset", async ({ network, dataSetId }) => {
     try {
@@ -204,7 +190,7 @@ Call this for provider name resolution instead of calling get_provider repeatedl
   }))
 
   server.registerTool("get_dataset_proving", {
-    description: "Check live proving status of a dataset. Returns: live, provenThisPeriod, deadline, lastProvenEpoch, leafCount, activePieceCount.",
+    description: "Is this PDP dataset live, how many pieces remain, and when is its next challenge? For FWSS datasets also check the current proving deadline and whether this period was proven. For historical missed proofs use get_proving_dataset.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, dataSetId: z.string().describe("Dataset ID, e.g. '11141'") },
   }, logged("get_dataset_proving", async ({ network, dataSetId }) => {
     try {
@@ -214,7 +200,7 @@ Call this for provider name resolution instead of calling get_provider repeatedl
   }))
 
   server.registerTool("get_rail", {
-    description: "Look up a FilecoinPay payment rail. Returns rate, lockup, settlement position, termination status.",
+    description: "Inspect a Filecoin Pay payment rail: who pays whom, in which token, at what rate, how much is locked, and through which epoch it has settled. Use query_sql for finalized rails or payment history.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum, railId: z.string().describe("Rail ID, e.g. '100'") },
   }, logged("get_rail", async ({ network, railId }) => {
     try {
@@ -224,7 +210,7 @@ Call this for provider name resolution instead of calling get_provider repeatedl
   }))
 
   server.registerTool("get_pricing", {
-    description: "Get current FWSS storage pricing. Returns storage price per TiB/month and minimum rate, formatted and raw.",
+    description: "What does Filecoin warm storage cost today? Read the FWSS version and its default price list: storage per TiB per month, the monthly per-dataset fee, CDN and cache-miss egress per TiB, one-time operation fees (fees), and lockup amounts and periods (lockups). Amounts are token base units with formatted equivalents. For the actual currency and terms on an existing dataset use get_dataset.",
     inputSchema: { network: networkEnum },
   }, logged("get_pricing", async ({ network }) => {
     try {
@@ -234,18 +220,11 @@ Call this for provider name resolution instead of calling get_provider repeatedl
   }))
 
   server.registerTool("get_auction", {
-    description: `Get the current fee auction status for a token in FilecoinPay.
-
-FilecoinPay accumulates network fees from settlements. These fees are periodically auctioned off: keepers bid FIL (which is burned) to claim the accumulated token fees. The auction uses a Dutch auction mechanism, price starts high and decays over time.
-
-Returns: accumulated fees available for auction, auction start price and time, and the network fee percentage.
-Use USDFC token address (see system context for addresses per network) for the primary fee pool.
-
-Historical auction completions are in the fp_burn_for_fees table (query_sql). This tool shows the current live state.`,
+    description: "How much in Filecoin Pay token fees can be claimed by burning FIL? Read the live Dutch auction pool, start price and start time for that token. For historical claims and FIL burned use query_sql (fp_burn_for_fees).",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
-      token: z.string().describe("Token contract address (typically USDFC)"),
+      token: address.describe("Token contract address"),
     },
   }, logged("get_auction", async ({ network, token }) => {
     try {
@@ -255,24 +234,12 @@ Historical auction completions are in the fp_burn_for_fees table (query_sql). Th
   }))
 
   server.registerTool("get_account", {
-    description: `Look up a FilecoinPay account's balance and solvency status. Returns current funds, lockup obligations, available (withdrawable) funds, and the epoch until which the account is funded.
-
-Requires both the token address and owner address. Use USDFC token address for storage payment accounts:
-- Calibnet: 0xb3042734b608a1B16e9e86B374A3f3e389B4cDf0
-- Mainnet: 0x80B98d3aa09ffff255c3ba4A241111Ff1262F045
-Use 0x0000000000000000000000000000000000000000 for native FIL accounts.
-
-Key fields:
-- funds: total deposited balance (before lockup deduction)
-- lockupCurrent: total locked across all rails (cannot be withdrawn)
-- availableFunds: funds minus lockup (what can be withdrawn)
-- fundedUntilEpoch: the epoch until which payments are covered at current rates. If this is in the past, the account is delinquent.
-- lockupRate: total streaming rate across all active rails`,
+    description: "How much can this Filecoin Pay wallet withdraw, how much is locked, and how long can it fund payments? Reads current balance and solvency for one owner and token. For native FIL use the full zero address.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
-      token: z.string().describe("Token contract address (USDFC or 0x0 for FIL)"),
-      owner: z.string().describe("Account owner address (0x...)"),
+      token: address.describe("Token contract address or the 20-byte zero address for native FIL"),
+      owner: address.describe("Account owner address"),
     },
   }, logged("get_account", async ({ network, token, owner }) => {
     try {
@@ -287,13 +254,7 @@ Key fields:
   // -- DealBot tools --
 
   server.registerTool("get_dealbot_stats", {
-    description: `Network-wide deal and IPFS retrieval metrics from BetterStack Prometheus data (DealBot test results).
-
-Returns: total deals, deal success rate, total IPFS retrievals, IPFS retrieval success rate, provider counts. Does NOT include retention/proving fault data, use get_proving_health for that.
-
-Data source: BetterStack ClickHouse, querying Prometheus counters from DealBot. DealBot runs 4 deals + 4 retrievals per SP per hour. Per-series delta computation handles pod restart counter resets.
-
-Supports flexible time windows (quantized to: 1h, 6h, 12h, 24h, 72h, 7d, 30d, 90d). Default: 72h. Sample counts ~10-15% lower than DealBot's actual counts due to Prometheus aggregation; success RATES are accurate.`,
+    description: "Are Filecoin warm storage uploads and IPFS retrievals succeeding across the network? Returns DealBot probe counts and success rates, not customer traffic or proof-of-storage faults.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -309,11 +270,7 @@ Supports flexible time windows (quantized to: 1h, 6h, 12h, 24h, 72h, 7d, 30d, 90
   }))
 
   server.registerTool("get_dealbot_providers", {
-    description: `All providers with deal and IPFS retrieval metrics from BetterStack Prometheus data (DealBot test results). Does NOT include retention/proving fault data, use get_proving_health for that.
-
-Returns per provider: providerId, providerName, providerStatus, totalDeals, dealSuccessRate, totalIpfsRetrievals, ipfsRetrievalSuccessRate.
-
-Default: 72h window (~288 deal checks, exceeds 200-check SLA minimum). Use hours=168 (7d) or hours=720 (30d) for longer trends. For SLA verdicts, use hours=72. For regression detection, compare hours=72 vs hours=720.`,
+    description: "Compare storage providers by DealBot upload and IPFS retrieval success rate and sample count. Use get_proving_health for retention faults rather than retrieval failures.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -331,9 +288,7 @@ Default: 72h window (~288 deal checks, exceeds 200-check SLA minimum). Use hours
   }))
 
   server.registerTool("get_dealbot_provider_detail", {
-    description: `Single provider deal and IPFS retrieval metrics from BetterStack Prometheus data. Use providerId (integer) from get_providers. Does NOT include retention/proving, use get_proving_health for that.
-
-Returns: same fields as get_dealbot_providers but for one provider. Use hours=72 for SLA assessments.`,
+    description: "Is one storage provider meeting its upload and IPFS retrieval targets? Look up DealBot success rates and sample counts by registry ID. Use 72 hours for SLA assessment.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -352,9 +307,7 @@ Returns: same fields as get_dealbot_providers but for one provider. Use hours=72
   }))
 
   server.registerTool("get_dealbot_daily", {
-    description: `Daily deal and IPFS retrieval time-series from BetterStack Prometheus data. Returns per-day buckets with deal/retrieval counts and rates per provider.
-
-Use for trend analysis, regression detection, provider dropoff tracking. Does NOT include retention/proving trends.`,
+    description: "When did upload or IPFS retrieval reliability change? Get daily DealBot counts and success rates by storage provider to spot regressions.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -372,9 +325,7 @@ Use for trend analysis, regression detection, provider dropoff tracking. Does NO
   }))
 
   server.registerTool("get_dealbot_failures", {
-    description: `DealBot failure analysis from DealBot's own REST API (not BetterStack). Returns common deal and retrieval errors with affected providers.
-
-Data source: DealBot NestJS backend database at dealbot.filoz.org (mainnet) / staging.dealbot.filoz.org (calibnet). Error categories: "fetch failed" = SP unreachable, 502 = backend down, "LockupNotSettledRateChangeNotAllowed" = payment contract issue.`,
+    description: "Why are Filecoin storage deals or IPFS retrieval probes failing? Get common DealBot errors and affected providers from its own failure database.",
     inputSchema: { i_have_read_the_system_context: affirmation, network: networkEnum },
   }, logged("get_dealbot_failures", async ({ network }) => {
     try {
@@ -394,17 +345,7 @@ Data source: DealBot NestJS backend database at dealbot.filoz.org (mainnet) / st
   }
 
   server.registerTool("get_proving_health", {
-    description: `Deep-dive into a storage provider's proving health. PRIMARY source for fault rates.
-
-Computed from indexed PDPVerifier events using the proof-gap method: for each NextProvingPeriod event, checks whether a PossessionProven exists in the preceding window. No proof = fault. When an SP goes dark (epoch gap spans multiple proving periods), the skipped periods are inferred as faults. The proving period is derived per-dataset from observed data (not hardcoded), so this works for any listener contract (FWSS, Storacha, etc.).
-
-activeDataSets counts only datasets that are not deleted, not emptied, and have proved in the last 3 days.
-
-Returns: all-time fault rate, weekly activity breakdown (faults, proofs, datasets created, pieces added), per-dataset proving status with derived provingPeriod.
-
-Requires the provider's EVM address (0x...). Call get_providers first to resolve providerId to address.
-
-For cross-validation, use get_proving_health_goldsky (PDP Explorer subgraph, independent source with known accuracy issues).`,
+    description: "Is a Filecoin PDP storage provider missing proofs of data possession? Primary source for retention fault rates, weekly activity and affected datasets, inferred from gaps between indexed proving periods. Use the provider EVM address from get_providers. For upload or retrieval failures use DealBot.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -422,11 +363,7 @@ For cross-validation, use get_proving_health_goldsky (PDP Explorer subgraph, ind
   }))
 
   server.registerTool("get_proving_dataset", {
-    description: `Get proving status for a single dataset using the proof-gap method on indexed PDPVerifier events.
-
-Returns: provingPeriod (derived from observed data, epochs), totalProvingPeriods (including inferred skipped), totalFaultedPeriods, totalProvedPeriods, lastPeriodTs, lastProofTs, faultRate. Operator-agnostic (works for FWSS, Storacha, any listener).
-
-Uses the dataset's setId (same as dataSetId in FWSS). For cross-validation, use get_proving_dataset_goldsky.`,
+    description: "Has this PDP dataset missed storage proofs over time? Get its last proof and period timestamps, observed cadence, proved and faulted periods, and fault rate. For the current challenge or deadline use get_dataset_proving.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -445,9 +382,7 @@ Uses the dataset's setId (same as dataSetId in FWSS). For cross-validation, use 
   // -- Proving health tools (PDP Explorer subgraph via Goldsky, for cross-validation) --
 
   server.registerTool("get_proving_health_goldsky", {
-    description: `Provider proving health from the PDP Explorer subgraph (Goldsky). Same data as get_proving_health but from an independent source.
-
-Use this for cross-validation when accuracy is critical. Known issue: the subgraph inflates "active" proof set counts by ~35% (empty/stale datasets remain marked isActive). See FilOzone/pdp-explorer#89.`,
+    description: "Cross-check one provider’s proof-of-storage fault history against the independent Goldsky PDP Explorer subgraph. Use get_proving_health first; active dataset counts can differ.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,
@@ -464,7 +399,7 @@ Use this for cross-validation when accuracy is critical. Known issue: the subgra
   }))
 
   server.registerTool("get_proving_dataset_goldsky", {
-    description: `Dataset proving status from the PDP Explorer subgraph (Goldsky). Same data as get_proving_dataset but from an independent source. Use for cross-validation.`,
+    description: "Cross-check one dataset’s PDP proving history in the independent Goldsky subgraph when investigating a discrepancy with get_proving_dataset.",
     inputSchema: {
       i_have_read_the_system_context: affirmation,
       network: networkEnum,

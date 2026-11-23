@@ -278,7 +278,7 @@ program
         console.log(`  To:         ${r.to}`)
         console.log(`  Operator:   ${r.operator}`)
         console.log(`  Validator:  ${r.validator}`)
-        console.log(`  Rate:       ${r.paymentRateFormatted}`)
+        console.log(`  Rate:       ${r.paymentRateFormatted ?? `${r.paymentRate} base units/epoch (${r.token})`}`)
         console.log(`  Settled to: epoch ${r.settledUpTo}`)
         console.log(`  Terminated: ${r.terminated}${r.terminated ? ` (epoch ${r.endEpoch})` : ""}`)
       }
@@ -300,9 +300,9 @@ program
       if (opts.json) {
         console.log(JSON.stringify(p, null, 2))
       } else {
-        console.log(`[${opts.network}] FWSS Pricing`)
-        console.log(`  Storage: ${p.storagePriceFormatted}`)
-        console.log(`  Minimum: ${p.minimumRateFormatted}`)
+        console.log(`[${opts.network}] FWSS ${p.fwssVersion}`)
+        console.log(`  Storage:     ${p.storagePriceFormatted ?? `${p.storagePrice} base units/TiB/month (${p.token})`}`)
+        console.log(`  Dataset fee: ${p.datasetFeePerMonthFormatted ?? `${p.datasetFeePerMonth} base units/month (${p.token})`}`)
       }
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`)

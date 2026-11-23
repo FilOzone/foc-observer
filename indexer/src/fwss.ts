@@ -12,9 +12,15 @@ import {
   fwssDataSetAuthorizerSet,
   fwssPdpPaymentTerminated,
   fwssCdnPaymentTerminated,
-  fwssCdnServiceTerminated,
   fwssCdnRailsToppedUp,
+  fwssCdnServiceTerminated,
   fwssDataSetAbandoned,
+  fwssStorageTermsRegistered,
+  fwssStorageTermsDisabled,
+  fwssDataSetStorageTermsSelected,
+  fwssDiamondDelegateCall,
+  fwssSelectorDelegated,
+  fwssErc1967Upgraded,
   contractUpgraded,
   upgradeAnnounced,
   ownershipTransferred,
@@ -23,8 +29,75 @@ import {
   fwssViewContractSet,
 } from "ponder:schema"
 import { decodePiece } from "./cid-utils.js"
-import { eventId, eventMeta } from "./event-utils.js"
+import { eventId, eventMeta, storageTermsSelectionRow } from "./event-utils.js"
 import { recordTx } from "./tx-meta.js"
+
+ponder.on("FWSSV15:DiamondDelegateCall", async ({ event, context }) => {
+  await recordTx(event, context)
+  const { delegate, delegateCalldata } = event.args
+  await context.db.insert(fwssDiamondDelegateCall).values({
+    id: eventId(event),
+    delegate,
+    delegateCalldata,
+    logIndex: event.log.logIndex,
+    ...eventMeta(event),
+  })
+})
+
+ponder.on("FWSSV15:SelectorDelegated", async ({ event, context }) => {
+  await recordTx(event, context)
+  const { selector, delegate } = event.args
+  await context.db.insert(fwssSelectorDelegated).values({
+    id: eventId(event),
+    selector,
+    delegate,
+    logIndex: event.log.logIndex,
+    ...eventMeta(event),
+  })
+})
+
+ponder.on("FWSSV15:Upgraded", async ({ event, context }) => {
+  await recordTx(event, context)
+  const { implementation } = event.args
+  await context.db.insert(fwssErc1967Upgraded).values({
+    id: eventId(event),
+    implementation,
+    logIndex: event.log.logIndex,
+    ...eventMeta(event),
+  })
+})
+
+ponder.on("FWSSV16:StorageTermsRegistered", async ({ event, context }) => {
+  await recordTx(event, context)
+  const { storageTermsId, terms } = event.args
+  const { token, tokenDecimals, salt, pricePerTiBPerMonth } = terms
+  await context.db.insert(fwssStorageTermsRegistered).values({
+    id: eventId(event),
+    storageTermsId,
+    token,
+    tokenDecimals,
+    salt,
+    pricePerTibPerMonth: pricePerTiBPerMonth,
+    logIndex: event.log.logIndex,
+    ...eventMeta(event),
+  })
+})
+
+ponder.on("FWSSV16:StorageTermsDisabled", async ({ event, context }) => {
+  await recordTx(event, context)
+  const { storageTermsId } = event.args
+  await context.db.insert(fwssStorageTermsDisabled).values({
+    id: eventId(event),
+    storageTermsId,
+    logIndex: event.log.logIndex,
+    ...eventMeta(event),
+  })
+})
+
+ponder.on("FWSSV16:DataSetStorageTermsSelected", async ({ event, context }) => {
+  await recordTx(event, context)
+  await context.db.insert(fwssDataSetStorageTermsSelected).values(storageTermsSelectionRow(event))
+})
 
 ponder.on("FWSS:DataSetCreated", async ({ event, context }) => {
   await recordTx(event, context)

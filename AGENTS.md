@@ -24,7 +24,7 @@ Current code, CI and the linked repository documentation are authoritative.
   - `tripwires.ts`: warnings attached to `query_sql` results for recurring query mistakes.
   - `logger.ts`: structured JSON logs.
 - `client/` is `@filoz/foc-observer` on npm: an MCP stdio proxy and CLI that forwards to a server; domain knowledge stays on the server.
-- `shared/` holds `system-context.ts` (the MCP `instructions` and the `get_system_context` result) and `table-metadata.ts` (table descriptions for the `query_sql` tool).
+- `shared/` holds `system-context.ts` (MCP startup instructions and complete protocol guide) and `table-metadata.ts` (field notes for schema discovery).
 - `indexer/` is the Ponder app. Read `indexer/AGENTS.md` before changing it.
 - `postgres/` holds `provision.sh` and `bootstrap.sql`, which the `postgres-query-role` Compose one-shot runs to create the restricted query role and its grants.
 - `docker-compose.yml` runs everything: two Postgres instances, two indexers, `lotus-proxy`, the provisioning one-shot and the server.
@@ -45,11 +45,11 @@ Every REST route and MCP tool is public and unauthenticated. Treat every path pa
 
 ## Data model
 
-- `indexer/src/schema-defs.ts` defines every table once. `ponder.schema.ts` maps it to Ponder tables, `shared/table-metadata.ts` turns it into the `query_sql` tool description, and its keys are the validator's table allow-list.
+- `indexer/src/schema-defs.ts` defines every table once. `ponder.schema.ts` maps it to Ponder tables, the discovery tools use it for table and column descriptions, and its keys are the validator's table allow-list.
 - Event rows carry `id`, `tx_hash`, `block_number` and `timestamp`. Transaction fields (`tx_from`, `tx_value`, `gas_used`, `effective_gas_price`, `tx_to`, `tx_selector`, `status`) live in `tx_meta`, one row per transaction, written by `recordTx`. Join with `JOIN tx_meta USING (tx_hash)`.
 - Each indexer writes its tables to a versioned schema (`data_vN`, named by `<NETWORK>_DATA_SCHEMA` in `.env`) and Ponder creates matching views in `public`. The server queries unqualified names and the validator rejects schema-qualified ones, so the server never knows which `data_vN` is live.
 - `fwss_*` tables key on `data_set_id` and `pdp_*` tables on `set_id`, which hold the same value. `rail_id` joins the `fp_*` tables, and `fwss_data_set_created.pdp_rail_id` links a dataset to its payment rail.
-- Knowledge an agent needs to interpret the data belongs in `shared/system-context.ts`. It's a TypeScript template literal, so escape backticks. `server/test/system-context.test.ts` caps its size below the MCP result limit, so anything added displaces something else. `{{BASE_URL}}` placeholders resolve from `FOC_API_URL` at runtime.
+- Keep `get_system_context` within 64 KiB on the wire and startup instructions within 5 KiB. `server/test/system-context.test.ts` measures both over MCP. Preserve worked queries, identifiers and interpretation traps in the single-call guide. Trim repetition and obsolete history before cutting recipes; use `describe_table` for column details.
 
 ## Build and test
 
@@ -66,6 +66,7 @@ CI runs these three jobs (`.github/workflows/test.yml`) and builds the indexer i
 - `npm test` in `server/` doesn't run `prebuild`. Run `npm run prebuild` after editing `shared/` or `schema-defs.ts`.
 - Offline tests mock `pg` and `fetch`. `npm run test:live` (`LIVE_TEST=1`) needs `FOC_CALIBNET_QUERY_DATABASE_URL` and a reachable Lotus RPC.
 - `test/role-check.db.test.ts` runs `checkQueryRole` against real roles when `ROLE_CHECK_DATABASE_URL` names a superuser on a disposable cluster; it creates and drops roles. CI provides one. Locally: `docker run --rm -d -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=x postgres:18`, then `ROLE_CHECK_DATABASE_URL=postgres://postgres:x@127.0.0.1:55432/postgres npm test`. Add a case there for every privilege the check learns to reject.
+- `test/proving-client.test.ts` runs the provider and network queries against PostgreSQL when `PROVING_QUERY_DATABASE_URL` is set. Use the same disposable cluster as the role checks; the suite creates and drops its own database.
 - A validator change can reject queries agents already rely on. Besides unit tests, replay real queries: in a deployment's `logs/foc-observer.jsonl`, the `type: "sql"` entries without an `error` all passed the validator that was live when they ran.
 
 Iterate with the smallest relevant test, and report the checks you didn't run.

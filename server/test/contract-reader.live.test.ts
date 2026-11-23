@@ -39,18 +39,28 @@ describe.skipIf(!LIVE)("ContractReader against calibnet", () => {
     expect(dataset.cdnRailId).toBeTruthy()
     expect(dataset.cacheMissRailId).toBeTruthy()
     expect(typeof dataset.terminated).toBe("boolean")
+    expect(dataset.storageTerms.id).toMatch(/^0x[a-fA-F0-9]{64}$/)
+    expect(dataset.storageTerms.tokenDecimals).toBeGreaterThanOrEqual(0)
+    expect(typeof dataset.storageTerms.enabled).toBe("boolean")
     expect(typeof dataset.metadata).toBe("object")
   }, 30_000)
 
   test("getDatasetProving returns proving state", async () => {
-    // Use a dataset that should exist
     const proving = await reader.getDatasetProving(11141n)
     expect(proving.dataSetId).toBe("11141")
-    expect(typeof proving.live).toBe("boolean")
-    expect(typeof proving.provenThisPeriod).toBe("boolean")
-    expect(proving.lastProvenEpoch).toBeTruthy()
-    expect(proving.leafCount).toBeTruthy()
-    expect(proving.activePieceCount).toBeTruthy()
+    if (proving.live) {
+      expect(typeof proving.provenThisPeriod).toBe("boolean")
+      expect(proving.lastProvenEpoch).toBeTruthy()
+      expect(proving.leafCount).toBeTruthy()
+      expect(proving.activePieceCount).toBeTruthy()
+    } else {
+      expect(proving.provenThisPeriod).toBeNull()
+      expect(proving.lastProvenEpoch).toBeNull()
+      expect(proving.provingDeadline).toBeNull()
+      expect(proving.nextChallengeEpoch).toBeNull()
+      expect(proving.leafCount).toBeNull()
+      expect(proving.activePieceCount).toBeNull()
+    }
   }, 30_000)
 
   test("getRail returns rail details for active rail", async () => {
@@ -59,7 +69,7 @@ describe.skipIf(!LIVE)("ContractReader against calibnet", () => {
     expect(rail.railId).toBe("13602")
     expect(rail.from).toMatch(/^0x[a-fA-F0-9]{40}$/)
     expect(rail.to).toMatch(/^0x[a-fA-F0-9]{40}$/)
-    expect(rail.paymentRateFormatted).toContain("USDFC/epoch")
+    expect(rail.paymentRateFormatted).toBeTruthy()
     expect(typeof rail.terminated).toBe("boolean")
   }, 30_000)
 
@@ -93,10 +103,11 @@ describe.skipIf(!LIVE)("ContractReader against calibnet", () => {
     expect(providers.some((p) => !p.isApproved)).toBe(true)
   }, 30_000)
 
-  test("getPricing returns current rates", async () => {
+  test("getPricing returns the deployed version and monthly rates", async () => {
     const pricing = await reader.getPricing()
-    expect(pricing.storagePriceFormatted).toBe("2.5 USDFC/TiB/month")
+    expect(pricing.fwssVersion).toBeTruthy()
+    expect(pricing.token).toMatch(/^0x[a-fA-F0-9]{40}$/)
     expect(Number(pricing.storagePrice)).toBeGreaterThan(0)
-    expect(Number(pricing.minimumRate)).toBeGreaterThan(0)
+    expect(Number(pricing.datasetFeePerMonth)).toBeGreaterThan(0)
   }, 30_000)
 })

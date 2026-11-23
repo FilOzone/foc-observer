@@ -7,6 +7,7 @@
 import pg from "pg"
 import type { NetworkConfig } from "./networks.js"
 import { validateSql, MAX_ROWS } from "./sql-validator.js"
+import { columnNotes } from "./table-metadata.js"
 
 export interface SqlResult {
   columns: string[]
@@ -24,6 +25,7 @@ export interface ColumnInfo {
   name: string
   type: string
   nullable: boolean
+  note?: string
 }
 
 import { TABLES } from "./schema-defs.js"
@@ -142,7 +144,7 @@ export class PonderClient {
    * bound parameters ($1, $2, ...), never as query text. Unlike querySql there is
    * no row cap.
    */
-  async queryInternal(rawSql: string, params: ReadonlyArray<string | number> = []): Promise<SqlResult> {
+  async queryInternal(rawSql: string, params: ReadonlyArray<string | number | null> = []): Promise<SqlResult> {
     const { sql } = validateSql(rawSql)
     const client = await this.queryPool.connect()
     try {
@@ -279,10 +281,12 @@ export class PonderClient {
       [tableName]
     )
 
+    const notes = columnNotes(tableName)
     return result.rows.map((row: Record<string, unknown>) => ({
       name: row.column_name as string,
       type: row.data_type as string,
       nullable: row.is_nullable === "YES",
+      note: notes.get(row.column_name as string),
     }))
   }
 
