@@ -120,7 +120,9 @@ foc-observer rail -n mainnet 100
 foc-observer pricing -n mainnet
 ```
 
-All commands support `--json` for machine-readable output.
+All commands support `--json` for machine-readable output. JSON escapes terminal control and bidirectional-format characters while preserving the decoded values.
+
+`providers` omits `startId` for the first page, then follows `nextId`, the first unscanned registry ID, sequentially for up to 100 pages (10,000 providers). Failed provider reads do not change the cursor. If it reaches that limit, it prints a resume command using the returned cursor. `complete: false` identifies an incomplete directory response; inspect `unavailableProviderIds`, `providerStatusAvailable` and `capabilitiesAvailable` before treating the result as a full directory.
 
 `pricing --json` reports amounts in token base units, with formatted equivalents. A nonempty dataset pays `datasetFeePerMonth` **in addition to** its size-based price. The output also carries egress rates, one-time operation `fees` and `lockups`. For the rate a particular dataset selected, read `dataset <id> --json` and inspect `storageTerms`.
 

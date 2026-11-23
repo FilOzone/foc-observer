@@ -2,9 +2,11 @@
  * Reads live state from FOC contracts via eth_call.
  * Complements Ponder's indexed event data with current contract state.
  */
-
+import { logBackendError } from "./logger.js"
 import { createPublicClient, http, type PublicClient, formatUnits, hexToString } from "viem"
 import type { NetworkConfig, NetworkName } from "./networks.js"
+import { InputError } from "./inputs.js"
+import { RequestCoalescer, MAX_UPSTREAM_RESPONSE_BYTES, UPSTREAM_TIMEOUT_MS } from "./upstream.js"
 
 const PDP_PRODUCT_TYPE = 0 // ProductType for PDP storage
 
@@ -87,9 +89,9 @@ const spRegistryAbi = [
 const endorsementSetAbi = [
   {
     type: "function",
-    name: "getProviderIds",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256[]" }],
+    name: "containsProviderId",
+    inputs: [{ name: "providerId", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
     stateMutability: "view",
   },
 ] as const
@@ -183,19 +185,9 @@ const fwssAbi = [
   },
   {
     type: "function",
-    name: "getApprovedProviders",
-    inputs: [
-      { name: "offset", type: "uint256" },
-      { name: "limit", type: "uint256" },
-    ],
-    outputs: [{ name: "providerIds", type: "uint256[]" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "getApprovedProvidersLength",
-    inputs: [],
-    outputs: [{ name: "count", type: "uint256" }],
+    name: "isProviderApproved",
+    inputs: [{ name: "providerId", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
     stateMutability: "view",
   },
   {
@@ -397,14 +389,100 @@ function decimalAmount(amount: bigint, decimals: number | undefined, unit = ""):
   return decimals === undefined ? null : formatUnits(amount, decimals) + unit
 }
 
+const MAX_PROVIDER_LIST_SIZE = 100
+const MAX_CONCURRENT_PROVIDER_READS = 8
+const PROVIDER_PAGE_TIMEOUT_MS = 12_000
+
+type Provider = {
+  providerId: string
+  name: string
+  description: string
+  serviceProvider: string
+  payee: string
+  isActive: boolean
+  capabilities: Record<string, string> | null
+  capabilitiesAvailable: boolean
+}
+
+type ListedProvider = Provider & {
+  isApproved: boolean | null
+  isEndorsed: boolean | null
+}
+
+export type ProviderList = {
+  providers: ListedProvider[]
+  total: string
+  complete: boolean
+  truncated: boolean
+  nextId: string | null
+  providerStatusAvailable: boolean
+  capabilitiesAvailable: boolean
+  unavailableProviderIds: string[]
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  signal: AbortSignal,
+  callback: (value: T) => Promise<R>,
+): Promise<Array<R | undefined>> {
+  const results = new Array<R | undefined>(values.length)
+  let next = 0
+
+  const worker = async () => {
+    while (!signal.aborted && next < values.length) {
+      const index = next++
+      results[index] = await callback(values[index])
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker))
+  return results
+}
+
+function createProviderPage(): { controller: AbortController; close: () => void } {
+  const controller = new AbortController()
+  const timeout = setTimeout(
+    () => controller.abort(new Error("Provider page deadline exceeded.")),
+    PROVIDER_PAGE_TIMEOUT_MS,
+  )
+  return {
+    controller,
+    close: () => {
+      clearTimeout(timeout)
+      controller.abort()
+    },
+  }
+}
+
 export class ContractReader {
   readonly network: NetworkConfig
   private client: PublicClient
+  private nextCapabilityErrorLog = 0
+  private readonly providerScans = new RequestCoalescer(1)
 
   constructor(network: NetworkConfig) {
     this.network = network
     this.client = createPublicClient({
-      transport: http(network.rpcUrl),
+      transport: http(network.rpcUrl, {
+        timeout: UPSTREAM_TIMEOUT_MS,
+        maxResponseBodySize: MAX_UPSTREAM_RESPONSE_BYTES,
+      }),
+    })
+  }
+
+  private createProviderPageClient(signal: AbortSignal): PublicClient {
+    return createPublicClient({
+      transport: http(this.network.rpcUrl, {
+        timeout: PROVIDER_PAGE_TIMEOUT_MS + 1,
+        maxResponseBodySize: MAX_UPSTREAM_RESPONSE_BYTES,
+        retryCount: 0,
+        fetchOptions: { signal },
+      }),
     })
   }
 
@@ -428,54 +506,60 @@ export class ContractReader {
     return metadata ? `${formatUnits(amount, metadata.decimals)} ${metadata.symbol}${unit}` : null
   }
 
-  /** Fetch PDP product capabilities for a provider. Returns null if no PDP product registered. */
-  private async getProviderCapabilities(providerId: bigint): Promise<Record<string, string> | null> {
+  /** Fetch PDP product capabilities for a provider. */
+  private async getProviderCapabilities(
+    providerId: bigint,
+    client: PublicClient = this.client,
+    signal?: AbortSignal,
+  ): Promise<{ capabilities: Record<string, string> | null; available: boolean }> {
     try {
-      const hasProduct = await this.client.readContract({
+      throwIfAborted(signal)
+      const hasProduct = await client.readContract({
         address: this.network.contracts.spRegistry,
         abi: spRegistryAbi,
         functionName: "providerHasProduct",
         args: [providerId, PDP_PRODUCT_TYPE],
       })
-      if (!hasProduct) return null
+      if (!hasProduct) return { capabilities: null, available: true }
 
-      const [isActive, keys, values] = await this.client.readContract({
+      throwIfAborted(signal)
+      const [isActive, keys, values] = await client.readContract({
         address: this.network.contracts.spRegistry,
         abi: spRegistryAbi,
         functionName: "getAllProductCapabilities",
         args: [providerId, PDP_PRODUCT_TYPE],
       })
-      if (!isActive) return null
+      if (!isActive) return { capabilities: null, available: true }
 
-      const caps: Record<string, string> = {}
+      const capabilities: Record<string, string> = {}
       for (let i = 0; i < keys.length; i++) {
-        caps[keys[i]] = values[i] ? decodeCapabilityValue(values[i]) : ""
+        capabilities[keys[i]] = values[i] ? decodeCapabilityValue(values[i]) : ""
       }
-      return caps
-    } catch {
-      return null
+      return { capabilities, available: true }
+    } catch (err) {
+      // One provider directory page may encounter the same RPC outage 100 times.
+      const now = Date.now()
+      if (now >= this.nextCapabilityErrorLog) {
+        this.nextCapabilityErrorLog = now + 30_000
+        logBackendError("rpc", "provider_capabilities", err, this.network.name)
+      }
+      return { capabilities: null, available: false }
     }
   }
 
-  async getProvider(providerId: bigint): Promise<{
-    providerId: string
-    name: string
-    description: string
-    serviceProvider: string
-    payee: string
-    isActive: boolean
-    capabilities: Record<string, string> | null
-  }> {
-    const [result, capabilities] = await Promise.all([
-      this.client.readContract({
-        address: this.network.contracts.spRegistry,
-        abi: spRegistryAbi,
-        functionName: "getProvider",
-        args: [providerId],
-      }),
-      this.getProviderCapabilities(providerId),
-    ])
+  async getProvider(providerId: bigint): Promise<Provider> {
+    return this.readProvider(providerId, this.client)
+  }
 
+  private async readProvider(providerId: bigint, client: PublicClient, signal?: AbortSignal): Promise<Provider> {
+    throwIfAborted(signal)
+    const result = await client.readContract({
+      address: this.network.contracts.spRegistry,
+      abi: spRegistryAbi,
+      functionName: "getProvider",
+      args: [providerId],
+    })
+    const { capabilities, available: capabilitiesAvailable } = await this.getProviderCapabilities(providerId, client, signal)
     return {
       providerId: result.providerId.toString(),
       name: result.info.name,
@@ -484,6 +568,7 @@ export class ContractReader {
       payee: result.info.payee,
       isActive: result.info.isActive,
       capabilities,
+      capabilitiesAvailable,
     }
   }
 
@@ -503,63 +588,106 @@ export class ContractReader {
     return { total: total.toString(), active: active.toString() }
   }
 
-  async getAllProviders(): Promise<{
-    providerId: string
-    name: string
-    description: string
-    serviceProvider: string
-    payee: string
-    isActive: boolean
-    isApproved: boolean
-    isEndorsed: boolean
-    capabilities: Record<string, string> | null
-  }[]> {
-    // Fetch provider count, approved set, and endorsed set in parallel
-    const [providerCount, approvedCount, endorsedIds] = await Promise.all([
-      this.client.readContract({
+  getAllProviders(startId = 1n): Promise<ProviderList> {
+    if (startId < 1n) throw new InputError("Provider start ID must be at least 1.")
+    return this.providerScans.run(startId.toString(), () => this.scanProviders(startId))
+  }
+
+  private async scanProviders(startId: bigint): Promise<ProviderList> {
+    const page = createProviderPage()
+    const client = this.createProviderPageClient(page.controller.signal)
+    try {
+      throwIfAborted(page.controller.signal)
+      const providerCount = await client.readContract({
         address: this.network.contracts.spRegistry,
         abi: spRegistryAbi,
         functionName: "getProviderCount",
-      }),
-      this.client.readContract({
+      })
+      const remaining = startId > providerCount ? 0n : providerCount - startId + 1n
+      const count = Number(remaining > BigInt(MAX_PROVIDER_LIST_SIZE) ? BigInt(MAX_PROVIDER_LIST_SIZE) : remaining)
+      const nextId = remaining > BigInt(MAX_PROVIDER_LIST_SIZE)
+        ? (startId + BigInt(MAX_PROVIDER_LIST_SIZE)).toString()
+        : null
+      const providerIds = Array.from({ length: count }, (_, index) => startId + BigInt(index))
+      const unavailableProviderIds: string[] = []
+      const providers = await mapWithConcurrency(
+        providerIds,
+        MAX_CONCURRENT_PROVIDER_READS,
+        page.controller.signal,
+        async (providerId) => {
+          try {
+            const provider = await this.readProvider(providerId, client, page.controller.signal)
+            const status = await this.getProviderStatus(providerId, client, page.controller.signal)
+            return { ...provider, ...status }
+          } catch {
+            unavailableProviderIds.push(providerId.toString())
+            return null
+          }
+        },
+      )
+      for (let index = 0; index < providers.length; index++) {
+        if (providers[index] === undefined) unavailableProviderIds.push(providerIds[index].toString())
+      }
+      const capabilitiesAvailable = providers.every(
+        (provider) => provider === null || provider === undefined || provider.capabilitiesAvailable,
+      )
+      const providerStatusAvailable = providers.every(
+        (provider) => provider === null || provider === undefined
+          || (provider.isApproved !== null && provider.isEndorsed !== null),
+      )
+
+      return {
+        providers: providers
+          .filter(
+            (provider): provider is Provider & Pick<ListedProvider, "isApproved" | "isEndorsed"> =>
+              provider !== null && provider !== undefined,
+          ),
+        total: providerCount.toString(),
+        complete: nextId === null
+          && providerStatusAvailable
+          && capabilitiesAvailable
+          && unavailableProviderIds.length === 0,
+        truncated: nextId !== null,
+        nextId,
+        providerStatusAvailable,
+        capabilitiesAvailable,
+        unavailableProviderIds,
+      }
+    } finally {
+      page.close()
+    }
+  }
+
+  private async getProviderStatus(
+    providerId: bigint,
+    client: PublicClient,
+    signal: AbortSignal,
+  ): Promise<Pick<ListedProvider, "isApproved" | "isEndorsed">> {
+    let isApproved: boolean | null = null
+    let isEndorsed: boolean | null = null
+    try {
+      throwIfAborted(signal)
+      isApproved = await client.readContract({
         address: this.network.contracts.fwss,
         abi: fwssAbi,
-        functionName: "getApprovedProvidersLength",
-      }),
-      this.client.readContract({
+        functionName: "isProviderApproved",
+        args: [providerId],
+      })
+    } catch {
+      isApproved = null
+    }
+    try {
+      throwIfAborted(signal)
+      isEndorsed = await client.readContract({
         address: this.network.contracts.endorsementSet,
         abi: endorsementSetAbi,
-        functionName: "getProviderIds",
-      }),
-    ])
-
-    const approvedIds = approvedCount > 0n
-      ? await this.client.readContract({
-          address: this.network.contracts.fwss,
-          abi: fwssAbi,
-          functionName: "getApprovedProviders",
-          args: [0n, approvedCount],
-        })
-      : []
-
-    const approvedSet = new Set(approvedIds.map((id) => id.toString()))
-    const endorsedSet = new Set(endorsedIds.map((id) => id.toString()))
-
-    // Fetch all provider details in parallel
-    const count = Number(providerCount)
-    const providers = await Promise.all(
-      Array.from({ length: count }, (_, i) =>
-        this.getProvider(BigInt(i + 1)).catch(() => null)
-      ),
-    )
-
-    return providers
-      .filter((p): p is NonNullable<typeof p> => p !== null)
-      .map((p) => ({
-        ...p,
-        isApproved: approvedSet.has(p.providerId),
-        isEndorsed: endorsedSet.has(p.providerId),
-      }))
+        functionName: "containsProviderId",
+        args: [providerId],
+      })
+    } catch {
+      isEndorsed = null
+    }
+    return { isApproved, isEndorsed }
   }
 
   async getDataset(dataSetId: bigint): Promise<{

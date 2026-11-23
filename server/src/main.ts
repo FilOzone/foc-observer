@@ -12,11 +12,13 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { PonderClient } from "./ponder-client.js"
 import { ContractReader } from "./contract-reader.js"
 import { BetterStackClient } from "./betterstack-client.js"
+import { DealbotClient } from "./dealbot-client.js"
 import { SubgraphClient } from "./subgraph-client.js"
 import { createRoutes } from "./routes.js"
 import { createMcpServer } from "./mcp-handler.js"
 import { ALL_NETWORKS, getNetworkConfig, type NetworkName } from "./networks.js"
-import { logStartup } from "./logger.js"
+import { logBackendError, logStartup } from "./logger.js"
+import { MAX_REQUEST_BYTES } from "./inputs.js"
 import { initParser } from "./sql-validator.js"
 
 const PORT = Number(process.env.FOC_SERVER_PORT ?? 17824)
@@ -44,18 +46,23 @@ if (bsUser && bsPass) {
 const subgraph = new SubgraphClient(networkConfigs)
 
 // REST API routes
-const restApp = createRoutes({ ponderClients, contractReaders, betterstack, subgraph })
+const dealbot = new DealbotClient()
+const restApp = createRoutes({ ponderClients, contractReaders, betterstack, subgraph, dealbot })
 
 // Combined Hono app: REST + MCP
 const app = new Hono()
+app.onError((err, c) => {
+  logBackendError("http", "request", err)
+  return c.json({ error: "Request failed." }, 500)
+})
 
 // Mount REST routes
 app.route("/", restApp)
 
 // MCP endpoint (Streamable HTTP transport, stateless)
 app.post("/mcp", async (c) => {
-  const mcpServer = createMcpServer(ponderClients, contractReaders, betterstack, subgraph)
-  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+  const mcpServer = createMcpServer(ponderClients, contractReaders, betterstack, subgraph, dealbot)
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, maxRequestBodySize: MAX_REQUEST_BYTES })
   await mcpServer.connect(transport)
   const response = await transport.handleRequest(c.req.raw)
   return response
@@ -89,8 +96,8 @@ for (const [name, client] of ponderClients) {
   let check: { role: string; problems: string[] }
   try {
     check = await client.checkQueryRole()
-  } catch (err) {
-    console.error(`${name}: refusing to start, cannot verify the query role: ${err instanceof Error ? err.message : String(err)}`)
+  } catch {
+    console.error(`${name}: refusing to start, cannot verify the query role. Check ${envVar} and Postgres availability.`)
     process.exit(1)
   }
   if (check.problems.length > 0) {
@@ -103,9 +110,8 @@ for (const [name, client] of ponderClients) {
   console.log(`  ${name}: query role "${check.role}" verified, rpc host ${urlHost(client.network.rpcUrl)}`)
 }
 console.log(`  BetterStack: ${betterstack ? "configured" : "not configured (set BETTERSTACK_CH_USER/PASSWORD)"}`)
-if (process.env.FOC_LOG_PATH) console.log(`  Log file: ${process.env.FOC_LOG_PATH}`)
 
-serve({ fetch: app.fetch, port: PORT }, (info) => {
+serve({ fetch: app.fetch, port: PORT, serverOptions: { headersTimeout: 15_000, requestTimeout: 30_000 } }, (info) => {
   console.log(`foc-observer server listening on http://localhost:${info.port}`)
   console.log(`  REST API: http://localhost:${info.port}/status`)
   console.log(`  MCP endpoint: http://localhost:${info.port}/mcp`)

@@ -14,7 +14,7 @@
  * so it works for any listener contract (FWSS=2880, Storacha=2880, calibnet=240, future configs).
  */
 
-import { parseAddress, parseSetId, parseWeeks } from "./inputs.js"
+import { parseAddress, parseUint256, parseWeeks } from "./inputs.js"
 import type { PonderClient } from "./ponder-client.js"
 
 const PROVING_FILTERS = {
@@ -323,7 +323,7 @@ export class ProvingClient {
   }
 
   async getDataset(setId: string): Promise<ProvingDataSet | null> {
-    const id = parseSetId(setId)
+    const id = parseUint256(setId)
     const rows = await this.sql(`
       ${this.provingCTE("dataset")}
       SELECT

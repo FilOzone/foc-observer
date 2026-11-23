@@ -10,6 +10,9 @@
  *         remote(t468215_infra_prod_metrics) mainnet.
  */
 
+import { InputError, parseUint256 } from "./inputs.js"
+import { PublicError } from "./public-error.js"
+import { BoundedCache, fetchText, RequestCoalescer } from "./upstream.js"
 import type { NetworkName } from "./networks.js"
 
 const ENDPOINT = "https://us-east-9-connect.betterstackdata.com"
@@ -50,7 +53,7 @@ function quantizeHours(hours: number): QuantizedHours {
 
 export function parseBucket(bucket: string): number {
   const hours = VALID_BUCKETS[bucket]
-  if (!hours) throw new Error(`Invalid bucket "${bucket}". Must be one of: ${Object.keys(VALID_BUCKETS).join(", ")}`)
+  if (!hours) throw new InputError(`Invalid bucket "${bucket}". Must be one of: ${Object.keys(VALID_BUCKETS).join(", ")}.`)
   return hours
 }
 
@@ -91,10 +94,6 @@ export interface TimeSeriesBucket {
   ipfsRetrievalSuccessRate: number
 }
 
-interface CacheEntry {
-  data: unknown
-  expiry: number
-}
 
 interface RawRow {
   provider_id?: string
@@ -107,10 +106,10 @@ interface RawRow {
 }
 
 export class BetterStackClient {
-  private username: string
-  private password: string
-  private cache = new Map<string, CacheEntry>()
-
+  private readonly cache = new BoundedCache<unknown>()
+  private readonly requests = new RequestCoalescer()
+  private readonly username: string
+  private readonly password: string
   constructor(username: string, password: string) {
     this.username = username
     this.password = password
@@ -121,28 +120,18 @@ export class BetterStackClient {
   }
 
   private getCached<T>(key: string): T | undefined {
-    const entry = this.cache.get(key)
-    if (!entry) return undefined
-    if (Date.now() > entry.expiry) {
-      this.cache.delete(key)
-      return undefined
-    }
-    return entry.data as T
+    return this.cache.get(key) as T | undefined
   }
 
   private setCache(key: string, data: unknown, hours: QuantizedHours): void {
-    this.cache.set(key, {
-      data,
-      expiry: Date.now() + CACHE_TTL[hours],
-    })
+    this.cache.set(key, data, CACHE_TTL[hours])
   }
 
   private async query(network: NetworkName, sql: string): Promise<RawRow[]> {
     const table = TABLES[network]
     const fullSql = sql.replace(/\{table\}/g, table) + " FORMAT JSONEachRow"
-
     const auth = Buffer.from(`${this.username}:${this.password}`).toString("base64")
-    const response = await fetch(ENDPOINT, {
+    const text = await fetchText(ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "text/plain",
@@ -151,30 +140,16 @@ export class BetterStackClient {
       body: fullSql,
     })
 
-    if (!response.ok) {
-      const text = await response.text()
-      // Strip credentials from any error messages
-      const sanitized = text
-        .replace(new RegExp(this.username, "g"), "***")
-        .replace(new RegExp(this.password, "g"), "***")
-        .replace(/[A-Za-z0-9+/=]{20,}/g, "***")
-      throw new Error(`BetterStack query failed (${response.status}): ${sanitized.slice(0, 200)}`)
-    }
-
-    const text = await response.text()
     if (!text.trim()) return []
-
-    return text
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as RawRow)
+    try {
+      return text.trim().split("\n").map((line) => JSON.parse(line) as RawRow)
+    } catch {
+      throw new PublicError("BetterStack returned an invalid response.")
+    }
   }
 
   private static validateProviderId(providerId: string): string {
-    if (!/^\d+$/.test(providerId)) {
-      throw new Error(`Invalid provider ID "${providerId}". Must be a numeric string.`)
-    }
-    return providerId
+    return parseUint256(providerId)
   }
 
   private buildAggregateQuery(hours: QuantizedHours, providerId?: string): string {
@@ -315,32 +290,30 @@ ORDER BY bucket, provider_id, name, status_label`
   async getProviderMetrics(network: NetworkName, hours: number): Promise<ProviderMetrics[]> {
     const qh = quantizeHours(hours)
     const cacheKey = `${network}:providers:${qh}`
-
     const cached = this.getCached<ProviderMetrics[]>(cacheKey)
-    if (cached) return cached
+    if (cached !== undefined) return cached
 
-    const sql = this.buildAggregateQuery(qh)
-    const rows = await this.query(network, sql)
-    const result = this.transformToProviderMetrics(rows)
-
-    this.setCache(cacheKey, result, qh)
-    return result
+    return this.requests.run(cacheKey, async () => {
+      const rows = await this.query(network, this.buildAggregateQuery(qh))
+      const result = this.transformToProviderMetrics(rows)
+      this.setCache(cacheKey, result, qh)
+      return result
+    })
   }
 
   async getProviderDetail(network: NetworkName, providerId: string, hours: number): Promise<ProviderMetrics | null> {
+    const id = BetterStackClient.validateProviderId(providerId)
     const qh = quantizeHours(hours)
-    const cacheKey = `${network}:provider:${providerId}:${qh}`
-
-    const cached = this.getCached<ProviderMetrics | null>(cacheKey)
+    const cacheKey = `${network}:provider:${id}:${qh}`
+    const cached = this.getCached<ProviderMetrics>(cacheKey)
     if (cached !== undefined) return cached
 
-    const sql = this.buildAggregateQuery(qh, providerId)
-    const rows = await this.query(network, sql)
-    const providers = this.transformToProviderMetrics(rows)
-    const result = providers.length > 0 ? providers[0] : null
-
-    this.setCache(cacheKey, result, qh)
-    return result
+    return this.requests.run(cacheKey, async () => {
+      const rows = await this.query(network, this.buildAggregateQuery(qh, id))
+      const result = this.transformToProviderMetrics(rows)[0] ?? null
+      if (result) this.setCache(cacheKey, result, qh)
+      return result
+    })
   }
 
   async getNetworkStats(network: NetworkName, hours: number): Promise<NetworkMetrics> {
@@ -367,17 +340,19 @@ ORDER BY bucket, provider_id, name, status_label`
   }
 
   async getTimeSeries(network: NetworkName, hours: number, bucketHours: number): Promise<TimeSeriesBucket[]> {
+    if (!Object.values(VALID_BUCKETS).includes(bucketHours)) {
+      throw new InputError(`Invalid bucket: expected one of ${Object.keys(VALID_BUCKETS).join(", ")}.`)
+    }
     const qh = quantizeHours(hours)
     const cacheKey = `${network}:timeseries:${qh}:${bucketHours}`
-
     const cached = this.getCached<TimeSeriesBucket[]>(cacheKey)
-    if (cached) return cached
+    if (cached !== undefined) return cached
 
-    const sql = this.buildTimeSeriesQuery(qh, bucketHours)
-    const rows = await this.query(network, sql)
-    const result = this.transformToTimeSeries(rows)
-
-    this.setCache(cacheKey, result, qh)
-    return result
+    return this.requests.run(cacheKey, async () => {
+      const rows = await this.query(network, this.buildTimeSeriesQuery(qh, bucketHours))
+      const result = this.transformToTimeSeries(rows)
+      this.setCache(cacheKey, result, qh)
+      return result
+    })
   }
 }

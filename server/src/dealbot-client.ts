@@ -8,6 +8,8 @@
  */
 
 import { InputError } from "./inputs.js"
+import { PublicError } from "./public-error.js"
+import { BoundedCache, fetchText, RequestCoalescer } from "./upstream.js"
 import type { NetworkName } from "./networks.js"
 
 const DEALBOT_URLS: Record<NetworkName, string> = {
@@ -25,19 +27,37 @@ const WINDOW_PRESETS = new Set(["1h", "6h", "12h", "24h", "7d", "30d", "90d"])
 // with a network tag. The system context teaches the agent what fields mean.
 interface Tagged { network: NetworkName; [key: string]: unknown }
 
+const CACHE_TTL = 60_000
+
 export class DealbotClient {
+  private readonly cache = new BoundedCache<Tagged>()
+  private readonly requests = new RequestCoalescer()
+
   private getUrl(network: NetworkName): string {
     return DEALBOT_URLS[network]
   }
 
   private async get(network: NetworkName, path: string): Promise<Tagged> {
-    const url = `${this.getUrl(network)}${path}`
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error(`DealBot API error (${response.status}): ${await response.text()}`)
-    }
-    const data = await response.json() as Record<string, unknown>
-    return { network, ...data }
+    const cacheKey = `${network}:${path}`
+    const cached = this.cache.get(cacheKey)
+    if (cached !== undefined) return cached
+
+    return this.requests.run(cacheKey, async () => {
+      const text = await fetchText(`${this.getUrl(network)}${path}`)
+      let value: unknown
+      try {
+        value = JSON.parse(text)
+      } catch {
+        throw new PublicError("DealBot returned an invalid response.")
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new PublicError("DealBot returned an invalid response.")
+      }
+      const data = value as Record<string, unknown>
+      const result = { ...data, network }
+      this.cache.set(cacheKey, result, CACHE_TTL)
+      return result
+    })
   }
 
   /** Network-wide aggregate stats. */
@@ -45,9 +65,9 @@ export class DealbotClient {
     return this.get(network, "/v1/metrics/network/stats")
   }
 
-  /** All providers with performance metrics. Endpoint removed from DealBot API; throws descriptive error. */
+  /** All providers with performance metrics. Endpoint removed from DealBot API. */
   async getProviderMetrics(_network: NetworkName): Promise<Tagged> {
-    throw new Error("DealBot /v1/providers/metrics endpoint has been removed. Use BetterStack-backed get_dealbot_providers MCP tool instead, or query individual providers via get_dealbot_provider_detail.")
+    throw new PublicError("DealBot provider metrics are unavailable. Use the BetterStack-backed provider tools instead.")
   }
 
   /** Single provider metrics over a time window. Presets: 1h, 6h, 12h, 24h, 7d, 30d, 90d. */
@@ -63,7 +83,10 @@ export class DealbotClient {
 
   /** Daily metrics for trend analysis. */
   async getDailyMetrics(network: NetworkName, days: number = 7): Promise<Tagged> {
-    return this.get(network, `/v1/metrics/daily/recent?days=${days}`)
+    if (!Number.isInteger(days) || days < 1) {
+      throw new InputError("Invalid days: expected a positive integer.")
+    }
+    return this.get(network, `/v1/metrics/daily/recent?${new URLSearchParams({ days: String(days) })}`)
   }
 
   /** Deal failure summary. */

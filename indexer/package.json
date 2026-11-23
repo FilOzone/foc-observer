@@ -13,6 +13,7 @@
     "codegen:calibnet": "PONDER_NETWORK=calibnet RPC_URL=http://localhost:1235/rpc/v1 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen",
     "codegen:mainnet": "PONDER_NETWORK=mainnet RPC_URL=http://localhost:1234/rpc/v1 DATABASE_URL=postgres://noop:noop@localhost:5432/noop ponder codegen",
     "generate-abis": "./scripts/generate-abis.sh",
+    "generate-public-relations": "node ../postgres/generate-public-relations.mjs",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "typecheck": "npm run codegen:mainnet && tsc --noEmit"
   },

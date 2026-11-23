@@ -109,26 +109,26 @@ Analytical tools require `i_have_read_the_system_context: true`. Call `get_syste
 
 ## Security model
 
-A deployment serves an unauthenticated public API. Anyone who can reach it can run read-only SQL over the indexed tables (`POST /sql`, `query_sql`) and call every other route and tool, from any origin. The data is public chain data, so read access is the product; a deployment's job is to make sure it's all a caller gets.
+A deployment serves an unauthenticated public API: anyone who can reach it can run read-only SQL over the indexed tables (`POST /sql`, `query_sql`) and call every route and tool, from any origin.
 
-Two layers sit between a caller and the database:
+**Limits.** Up to 50,000 SQL characters, 30 seconds per statement, 10,000 result rows and 16 MiB of compact result JSON. PostgreSQL checks each SELECT row against 4 MiB of record text before transfer. Each network has a 12-connection pool. Select fewer or smaller columns for a row-size error; paginate for a result-size error.
 
-1. **The SQL validator** (`server/src/sql-validator.ts`) parses each query with the Postgres parser and accepts only allow-listed statements, syntax, functions, types and tables. The server's own queries go through it too, with caller values bound as parameters.
-2. **The database role.** The server connects as `foc_observer_query`, which can only `SELECT` from the views in `public`. It can't write, create objects, read Ponder's `data_v*` and `ponder_sync` schemas, or use privileged file and program functions.
+**Layers.**
 
-The role is the real boundary, because it limits the damage when the validator or server has a bug. As `foc_observer_query`, a bug can expose catalog metadata and anything readable in `public` (`postgres/bootstrap.sql` grants `SELECT` on every current and future table there except Ponder's bookkeeping), and tie up database capacity. As `ponder`, the owner and a superuser in the official Postgres image, the same bug gives a caller superuser SQL: reading and writing files on the database host, running commands there through `COPY ... TO PROGRAM`, and reaching anything that host can reach.
+1. **SQL validator** (`server/src/sql-validator.ts`). Parses each query with the Postgres parser and accepts only allow-listed statements, syntax, functions, types and tables. The server's own queries pass through it too, with caller values bound as parameters.
+2. **Database role** `foc_observer_query`. `SELECT` on the published views in `public`, granted by name from `postgres/bootstrap.sql`, plus the catalog metadata every Postgres role can read. It can't write, create objects, read Ponder's `data_v*` or `ponder_sync` schemas, or use file and program functions. The server checks the role at startup and exits if it can do more.
 
 ### Deployment requirements
 
-- **Query as `foc_observer_query`, never as an owner.** Both `FOC_<NETWORK>_QUERY_DATABASE_URL` connections must use that role. Compose builds them from `FOC_QUERY_DATABASE_PASSWORD`, and its `postgres-query-role` one-shot (`postgres/provision.sh`, `postgres/bootstrap.sql`) creates the role and its grants before the server starts. The server checks at startup, and exits if the connection didn't log in and run as `foc_observer_query`, or the role has attributes beyond `LOGIN`, belongs to another role, can use a schema other than `public`, can create objects or temporary tables, or can own or write to any table, column or sequence. It also exits if the check can't run.
-- **Set `FOC_QUERY_DATABASE_PASSWORD`.** The Compose default, `foc-observer`, is public.
-- **Keep Postgres private.** Compose doesn't publish Postgres ports, but any process on the Docker host can reach the containers' bridge addresses and log in as `ponder` with the password in `docker-compose.yml`, so don't share the host with untrusted users or workloads.
-- **Isolate the host.** Keep foc-observer off machines and network segments that hold wallets, private keys, storage provider infrastructure (Curio, YugabyteDB, a Lotus node with a wallet) or credentials for other systems. If the database layer falls, the attacker's next step is whatever that host can reach.
-- **Make a reverse proxy the only way in.** The server doesn't authenticate or rate-limit, and with 30-second queries and a 12-connection pool per network, a few callers can saturate it. Terminate TLS and rate-limit at the proxy. Compose publishes the server on `127.0.0.1` unless `FOC_SERVER_BIND` says otherwise, which suits a proxy on the same host. For a remote proxy, set `FOC_SERVER_BIND` to an interface address and firewall the port, or restrict the router's port forward, to the proxy's address; anyone else who can reach it skips the proxy. For a proxy container on the Compose network, drop the `ports` mapping.
-- **Firewall `lotus-proxy`.** It uses host networking and listens on 11234 and 11235 on every interface. Block both from outside the host, and point it at a `lotus-gateway` (a restricted read API) rather than a full node.
-- **Keep keys out of RPC URLs.** RPC error messages reach callers and include the URL with only `user:password` redacted, so a key in the path or query string leaks.
+- **Query as `foc_observer_query`.** Compose sets this up: passwordless database URLs with `PGPASSWORD` set separately for the server and indexers, a `postgres-query-role` service that installs the view allow-list before Ponder starts, and an event trigger that grants `SELECT` as Ponder publishes each view.
+- **Distinct passwords.** Generate `FOC_DATABASE_OWNER_PASSWORD` and `FOC_QUERY_DATABASE_PASSWORD` separately, for example with `openssl rand -hex 32`.
+- **Existing volumes** need the one-time [credential migration](REINDEX.md#credential-migration), which rotates the owner password and keeps the live indexers; it doesn't need a reindex.
+- **Private Postgres.** Compose doesn't publish database ports.
+- **An isolated host,** on a network segment without wallets, private keys, storage provider infrastructure (Curio, YugabyteDB, a Lotus node with a wallet) or credentials for other systems.
+- **A reverse proxy as the only way in,** terminating TLS and rate-limiting; the server does neither. Compose binds the server to `127.0.0.1` unless `FOC_SERVER_BIND` says otherwise. For a remote proxy, set `FOC_SERVER_BIND` to an interface address and restrict the port, by firewall or port forward, to the proxy's address. For a proxy container on the Compose network, drop the `ports` mapping.
+- **Restricted Lotus access.** Remote RPC needs nothing extra. For loopback-only Lotus, enable the `lotus` profile with `LOTUS_PROXY_BIND` set to the Docker bridge gateway, firewall ports 11234 and 11235, and use a read-only Lotus gateway.
 
-The server's log (`logs/foc-observer.jsonl`) records every query and MCP call with its parameters, plus the caller's user agent and `X-Real-IP` when the proxy sets it.
+**Logs.** JSON request logs go to stdout; Compose rotates them at 50 MB, keeping three files. Successful SQL requests log the first 2,000 characters of the query, so restrict log access. Other entries carry bounded metadata, without tool arguments, backend diagnostics, connection URLs or response bodies. Callers get a fixed message for unknown backend errors.
 
 ### Checking a deployment
 
@@ -139,7 +139,7 @@ docker compose logs foc-observer | grep 'query role'
 # mainnet: query role "foc_observer_query" verified, rpc host ...
 ```
 
-For a build without that line, ask Postgres which logins the server's own sessions use. The server closes idle connections after a few seconds, so make a request first:
+For an older build that doesn't log it, ask Postgres which logins the server's sessions use, making a request first because the server closes idle connections after a few seconds:
 
 ```bash
 ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$(docker compose ps -q foc-observer)")
@@ -150,7 +150,7 @@ docker compose exec postgres-mainnet psql -U ponder -d ponder -c \
 # repeat against postgres-calibnet
 ```
 
-If a deployment has ever queried as `ponder` or another owner or superuser, assume the database host, and anything it can reach, may be compromised. Rotate the credentials it can reach, and look for unexpected roles, functions, large objects and files.
+If a deployment has ever queried as `ponder` or another owner or superuser, treat the database host and anything it can reach as compromised: superuser SQL can run commands on the host. Rotate the credentials it can reach, and look for unexpected roles, functions, large objects and files.
 
 Report suspected vulnerabilities privately as the [FilOzone security policy](https://github.com/FilOzone/.github/blob/main/SECURITY.md) describes, not in a public issue.
 
@@ -174,7 +174,7 @@ docker volume create ponder_pgdata-mainnet
 
 # Configure
 cp .env.example .env
-# Edit .env: RPC endpoints, public URL, and FOC_QUERY_DATABASE_PASSWORD
+# Fill in both RPC endpoints, the public URL and two distinct database passwords.
 
 # Start
 docker compose up -d
@@ -195,12 +195,13 @@ All configuration is via `.env`; `.env.example` is the template.
 | `FOC_API_URL` | Yes | Public URL of your deployment |
 | `FOC_SERVER_PORT` | Yes | HTTP server port |
 | `FOC_SERVER_BIND` | No | Address Compose publishes the server on (default `127.0.0.1`) |
-| `FOC_QUERY_DATABASE_PASSWORD` | Yes, if exposed | Password for the `foc_observer_query` role (Compose default `foc-observer`) |
+| `FOC_DATABASE_OWNER_PASSWORD` | Yes | Owner login for the indexer and provisioning |
+| `FOC_QUERY_DATABASE_PASSWORD` | Yes | Separate password for the read-only server login |
+| `FOC_DATABASE_OWNER_PREVIOUS_PASSWORD` | Rotation only | Current owner password while the provisioner rotates populated volumes to `FOC_DATABASE_OWNER_PASSWORD`; unset afterwards |
 | `CALIBNET_RPC_URL` | Yes | Calibnet Lotus RPC endpoint |
 | `MAINNET_RPC_URL` | Yes | Mainnet Lotus RPC endpoint |
-| `LOTUS_CALIBNET_HOST` | No | Local Lotus host for the socat proxy (default `127.0.0.1`) |
+| `LOTUS_PROXY_BIND` | Local proxy only | Docker bridge gateway accessible as `host.docker.internal` |
 | `LOTUS_CALIBNET_PORT` | No | Local Lotus port for the socat proxy (default `2235`) |
-| `LOTUS_MAINNET_HOST` | No | Local Lotus host for the socat proxy (default `127.0.0.1`) |
 | `LOTUS_MAINNET_PORT` | No | Local Lotus port for the socat proxy (default `2234`) |
 | `BETTERSTACK_CH_USER` | No | BetterStack ClickHouse username (enables DealBot metrics) |
 | `BETTERSTACK_CH_PASSWORD` | No | BetterStack ClickHouse password |
@@ -218,7 +219,7 @@ docker compose up -d postgres-calibnet postgres-mainnet ponder-calibnet ponder-m
 **Local Lotus nodes:** `lotus-proxy`, the only container with host networking, forwards two host ports into the Docker bridge network:
 
 ```bash
-docker compose up -d
+docker compose --profile lotus up -d
 ```
 
 ### Architecture

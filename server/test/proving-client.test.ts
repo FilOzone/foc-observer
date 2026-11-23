@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto"
 import pg from "pg"
-import { afterAll, beforeAll, describe, expect, test } from "vitest"
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest"
 import { getNetworkConfig, type NetworkName } from "../src/networks.js"
-import { PonderClient } from "../src/ponder-client.js"
+import { MAX_PG_ROW_BYTES, PonderClient, type SqlSizeMetrics } from "../src/ponder-client.js"
 import { ProvingClient } from "../src/proving-client.js"
 import { initParser } from "../src/sql-validator.js"
 
@@ -102,6 +102,7 @@ describe.skipIf(!DATABASE_URL)("ProvingClient active datasets against Postgres",
       CREATE TABLE pdp_possession_proven (id text, set_id bigint, timestamp bigint);
       CREATE TABLE pdp_data_set_deleted (id text, set_id bigint);
       CREATE TABLE pdp_pieces_added (id text, set_id bigint, timestamp bigint);
+      CREATE TABLE fwss_data_set_created (source text);
     `)
     await seed()
   })
@@ -131,5 +132,85 @@ describe.skipIf(!DATABASE_URL)("ProvingClient active datasets against Postgres",
     ["calibnet", PROVIDER_B, 1],
   ] as const)("matches provider health for %s %s", async (network, provider, expected) => {
     expect(await activeFromProvider(network, provider)).toBe(expected)
+  })
+
+  test("rejects excess database work before checkout, then admits requests after the queue drains", async () => {
+    const ponder = new PonderClient(getNetworkConfig("mainnet", { queryDatabaseUrl: fixtureUrl }))
+    try {
+      const firstWave = Promise.all(Array.from({ length: 24 }, () => ponder.querySql("SELECT 1 AS n")))
+      await expect(ponder.describeTable("pdp_data_set_created")).rejects.toThrow("Database busy")
+      await firstWave
+      expect((await ponder.querySql("SELECT 2 AS n")).rows).toEqual([{ n: 2 }])
+    } finally {
+      await ponder.close()
+    }
+  })
+
+  test("losing a checked-out PostgreSQL session rejects only that request", async () => {
+    const ponder = new PonderClient(getNetworkConfig("mainnet", { queryDatabaseUrl: fixtureUrl }))
+    await fixture.query("BEGIN")
+    try {
+      await fixture.query("LOCK pdp_data_set_created IN ACCESS EXCLUSIVE MODE")
+      const { rows: [holder] } = await fixture.query("SELECT pg_backend_pid() AS pid")
+      const interrupted = ponder.querySql("SELECT id FROM pdp_data_set_created").then(
+        () => false, () => true,
+      )
+      await vi.waitFor(async () => {
+        const { rows } = await admin.query(
+          "SELECT pid FROM pg_stat_activity WHERE datname = $1 AND $2 = ANY(pg_blocking_pids(pid))",
+          [fixtureDatabase, holder.pid],
+        )
+        expect(rows).toHaveLength(1)
+        await admin.query("SELECT pg_terminate_backend($1)", [rows[0].pid])
+      })
+      expect(await interrupted).toBe(true)
+      expect((await ponder.querySql("SELECT 7 AS n")).rows).toEqual([{ n: 7 }])
+    } finally {
+      await fixture.query("ROLLBACK")
+      await ponder.close()
+    }
+  })
+
+  test("reports truncation only when another row exists, regardless of its width", async () => {
+    await fixture.query("CREATE TABLE tx_meta (id integer PRIMARY KEY, status text)")
+    await fixture.query("INSERT INTO tx_meta SELECT id, 'ok' FROM generate_series(1, 10000) id")
+    const ponder = new PonderClient(getNetworkConfig("mainnet", { queryDatabaseUrl: fixtureUrl }))
+    const sql = "SELECT status FROM tx_meta ORDER BY id"
+    try {
+      const exact = await ponder.querySql(sql)
+      expect(exact.rowCount).toBe(10_000)
+      expect(exact.truncated).toBeUndefined()
+      await fixture.query("INSERT INTO tx_meta VALUES (10001, $1)", ["x".repeat(MAX_PG_ROW_BYTES + 1)])
+      const capped = await ponder.querySql(sql)
+      expect(capped.rowCount).toBe(10_000)
+      expect(capped.truncated).toBe(true)
+    } finally {
+      await ponder.close()
+    }
+  })
+
+  test("fetches a 2 MiB row below the PostgreSQL row guard", async () => {
+    await fixture.query("INSERT INTO fwss_data_set_created (source) VALUES ($1)", ["x".repeat(2 * 1_024 * 1_024)])
+    const ponder = new PonderClient(getNetworkConfig("calibnet", { queryDatabaseUrl: fixtureUrl }))
+    try {
+      const metrics: SqlSizeMetrics = {}
+      const result = await ponder.querySql("SELECT source FROM fwss_data_set_created", metrics)
+      expect(result.rows).toHaveLength(1)
+      expect(metrics.maxRowBytes).toBe(Buffer.byteLength(JSON.stringify(result.rows[0]), "utf8"))
+    } finally {
+      await ponder.close()
+    }
+  })
+
+  test("rejects oversized stored result rows before fetching them", async () => {
+    await fixture.query("INSERT INTO fwss_data_set_created (source) VALUES ($1)", ["x".repeat(MAX_PG_ROW_BYTES + 1)])
+    const ponder = new PonderClient(getNetworkConfig("calibnet", { queryDatabaseUrl: fixtureUrl }))
+    try {
+      const metrics: SqlSizeMetrics = {}
+      await expect(ponder.querySql("SELECT source FROM fwss_data_set_created", metrics)).rejects.toThrow(/row exceeds/)
+      expect(metrics.limitHit).toBe("pg_row")
+    } finally {
+      await ponder.close()
+    }
   })
 })

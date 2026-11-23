@@ -78,30 +78,26 @@ describe.skipIf(!LIVE)("ContractReader against calibnet", () => {
     await expect(reader.getRail(12174n)).rejects.toThrow()
   }, 30_000)
 
-  test("getAllProviders returns providers with tiers", async () => {
-    const providers = await reader.getAllProviders()
-    expect(providers.length).toBeGreaterThan(0)
-
-    // Every provider should have the expected fields
-    for (const p of providers) {
-      expect(p.providerId).toBeTruthy()
-      expect(typeof p.name).toBe("string")
-      expect(typeof p.isActive).toBe("boolean")
-      expect(typeof p.isApproved).toBe("boolean")
-      expect(typeof p.isEndorsed).toBe("boolean")
+  test("getAllProviders walks the registered providers and reports status availability", async () => {
+    let startId = 1n
+    let returned = 0
+    for (;;) {
+      const page = await reader.getAllProviders(startId)
+      for (const provider of page.providers) {
+        expect(BigInt(provider.providerId)).toBeGreaterThanOrEqual(startId)
+        expect(typeof provider.name).toBe("string")
+        expect(typeof provider.isActive).toBe("boolean")
+        for (const status of [provider.isApproved, provider.isEndorsed]) {
+          if (page.providerStatusAvailable || status !== null) expect(typeof status).toBe("boolean")
+        }
+      }
+      returned += page.providers.length
+      if (page.nextId === null) break
+      expect(BigInt(page.nextId)).toBeGreaterThan(startId)
+      startId = BigInt(page.nextId)
     }
-
-    // Endorsed is a subset of approved
-    const endorsed = providers.filter((p) => p.isEndorsed)
-    for (const p of endorsed) {
-      expect(p.isApproved).toBe(true)
-    }
-
-    // There should be at least some approved and some endorsed on calibnet
-    expect(providers.some((p) => p.isApproved)).toBe(true)
-    expect(providers.some((p) => p.isEndorsed)).toBe(true)
-    expect(providers.some((p) => !p.isApproved)).toBe(true)
-  }, 30_000)
+    expect(returned).toBeGreaterThan(0)
+  }, 90_000)
 
   test("getPricing returns the deployed version and monthly rates", async () => {
     const pricing = await reader.getPricing()

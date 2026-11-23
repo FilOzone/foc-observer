@@ -19,14 +19,15 @@ Current code, CI and the linked repository documentation are authoritative.
   - `sql-validator.ts`: the allow-list every SQL query passes.
   - `ponder-client.ts`: Postgres access. `querySql` runs caller SQL, `queryInternal` runs the server's own SQL, `checkQueryRole` inspects the connected role.
   - `proving-client.ts`: proving health computed from `pdp_*` events.
-  - `inputs.ts`: parsers for caller-supplied identifiers.
+  - `inputs.ts`: parsers for caller-supplied identifiers. `public-error.ts` separates client diagnostics from backend failures.
+  - `upstream.ts`: bounded reads, caches and request coalescing for external services.
   - `contract-reader.ts`, `subgraph-client.ts`, `betterstack-client.ts`, `dealbot-client.ts`: the other sources.
   - `tripwires.ts`: warnings attached to `query_sql` results for recurring query mistakes.
   - `logger.ts`: structured JSON logs.
 - `client/` is `@filoz/foc-observer` on npm: an MCP stdio proxy and CLI that forwards to a server; domain knowledge stays on the server.
 - `shared/` holds `system-context.ts` (MCP startup instructions and complete protocol guide) and `table-metadata.ts` (field notes for schema discovery).
 - `indexer/` is the Ponder app. Read `indexer/AGENTS.md` before changing it.
-- `postgres/` holds `provision.sh` and `bootstrap.sql`, which the `postgres-query-role` Compose one-shot runs to create the restricted query role and its grants.
+- `postgres/` holds `provision.sh` and `bootstrap.sql`, which the `postgres-query-role` Compose one-shot runs to create the restricted query role and its grants. `generate-public-relations.mjs` generates the `public-relations.sql` manifest from the indexer schema.
 - `docker-compose.yml` runs everything: two Postgres instances, two indexers, `lotus-proxy`, the provisioning one-shot and the server.
 
 `npm run prebuild` in `server/` copies `shared/*.ts` and `indexer/src/schema-defs.ts` into `server/src/`. Those copies are gitignored and the server Dockerfile copies from the canonical paths, so edit only the originals.
@@ -35,13 +36,13 @@ Current code, CI and the linked repository documentation are authoritative.
 
 Every REST route and MCP tool is public and unauthenticated. Treat every path parameter, query parameter, header, tool argument and SQL string as hostile.
 
-- **Caller input never becomes query text.** The server's SQL takes values as `$n` parameters through `queryInternal(sql, params)`. Parse a caller identifier before use with `inputs.ts` (`parseAddress`, `parseSetId`, `parseWeeks`) or an equally strict check. Anything that has to go into GraphQL text, a ClickHouse query or an upstream URL needs a parser first, because those paths don't bind parameters. The only dynamic SQL text is fixed fragments the server selects by key, such as `PROVING_FILTERS` in `proving-client.ts`.
+- **Caller input never becomes query text.** The server's SQL takes values as `$n` parameters through `queryInternal(sql, params)`. Parse a caller identifier before use with `inputs.ts` (`parseAddress`, `parseUint256`, `parseWeeks`) or an equally strict check. Anything that has to go into GraphQL text, a ClickHouse query or an upstream URL needs a parser first, because those paths don't bind parameters. The only dynamic SQL text is fixed fragments the server selects by key, such as `PROVING_FILTERS` in `proving-client.ts`.
 - **All event-table SQL goes through `validateSql`**, whoever wrote it. The exceptions are `PonderClient`'s fixed catalog queries (`listTables`, `describeTable`, `checkQueryRole`), which are static apart from a bound table name in `describeTable`.
 - **The validator is an allow-list**: statement types, syntax node types (`ALLOWED_NODE_TYPES`), functions (`ALLOWED_FUNCTIONS`, plus `SQL_SYNTAX_FUNCTIONS` for standard SQL forms such as `EXTRACT`), cast and column types (`ALLOWED_TYPES`), and tables (the keys of `TABLES` in `schema-defs.ts`, plus CTE names in scope). Extending any of these is a security decision. An addition must not read the system catalogs or other schemas, resolve object names (the `reg*` types, `to_regclass`), execute a string as SQL (`query_to_xml`), touch files, large objects or other sessions, change settings (`set_config`), sleep or take locks. Add a test that rejects the dangerous use and one that accepts the legitimate one.
 - **Names resolve the way Postgres resolves them.** An unqualified table, function or type name is looked up in `pg_catalog` before `public`, so any rule that allows a name has to match Postgres's scoping. CTE names are scoped per `SELECT` and registered after their own body, as in a non-recursive `WITH`.
-- **The database role is the real boundary.** The server connects only through `FOC_<NETWORK>_QUERY_DATABASE_URL`, which has no default, and `main.ts` exits unless `checkQueryRole` finds a connection that logged in as, and runs as, `foc_observer_query`, with no role memberships, no CREATE or TEMPORARY privilege, no schema access beyond `public`, and no way to own or write to a table, column or sequence in any schema. Startup logs name the verified role and the RPC host, never a connection URL. Don't add a fallback to an owner connection, give the server owner credentials, or run DDL from the server. Grants belong in `postgres/bootstrap.sql`, which the one-shot reapplies.
-- **Error text reaches callers.** `sanitizeError` strips Postgres connection strings and `password=` fragments and nothing else. viem errors embed the RPC URL. Keep secrets out of error messages.
-- **Bound the work a request can cause.** `MAX_SQL_LENGTH` (50,000) caps parser input, `MAX_ROWS` (10,000) caps results through a cursor, and the role's `statement_timeout` (30 seconds) and each network's 12-connection pool cap database time. The validator has to stay linear in query size: walk each node once, because nested structures that get re-walked grow exponentially.
+- **The database role is the real boundary.** The server connects only through `FOC_<NETWORK>_QUERY_DATABASE_URL`, which has no default, and `main.ts` exits unless `checkQueryRole` finds a connection that logged in as, and runs as, `foc_observer_query`, with no role memberships, no CREATE or TEMPORARY privilege, no schema access beyond `public`, and no way to own or write to a table, column or sequence in any schema. Startup logs name the verified role and the RPC host, never a connection URL. Don't add a fallback to an owner connection, give the server owner credentials, or run DDL from the server. `postgres/bootstrap.sql` grants only public views from `postgres/public-relations.sql`. Regenerate the manifest with `node postgres/generate-public-relations.mjs` when `TABLES` changes. The provisioner installs the manifest and the `CREATE VIEW` trigger before Ponder starts. Both the trigger and the server startup check require an owner-published direct projection of the matching `data_vN` table.
+- **Keep backend diagnostics private.** Only `InputError` and `PublicError` carry messages to callers. Use those for locally authored diagnostics, never for upstream bodies, driver messages or connection URLs.
+- **Bound caller SQL.** REST SQL and MCP bodies are limited to 320 KiB; the SQL limit is 50,000 characters on both transports. The SELECT cursor checks each PostgreSQL text row against 4 MiB before transfer. Keep fetches bounded: a batch occupies driver memory alongside the accumulated result. The 10,000-row cap reports truncation; the row guard and 16 MiB compact result budget reject oversized results. PostgreSQL still evaluates each expression. Each network admits 12 active queries and 12 waiting checkouts. Pool acquisition times out after two seconds; the caller transaction has a 60-second deadline across fetches and each statement has a 30-second timeout. Keep the parser allow-list and reverse-proxy rate limits.
 
 ## Data model
 
@@ -61,13 +62,13 @@ Run from the repository root with the current Node.js LTS release, matching CI's
 (cd indexer && npm ci && npm test && npm run codegen:calibnet && npm run typecheck)
 ```
 
-CI runs these three jobs (`.github/workflows/test.yml`) and builds the indexer image on pushes to `master` (`indexer-image.yml`).
+`.github/workflows/test.yml` runs all three jobs. The indexer image workflow calls the same tests on the exact publication commit before writing to GHCR.
 
 - `npm test` in `server/` doesn't run `prebuild`. Run `npm run prebuild` after editing `shared/` or `schema-defs.ts`.
 - Offline tests mock `pg` and `fetch`. `npm run test:live` (`LIVE_TEST=1`) needs `FOC_CALIBNET_QUERY_DATABASE_URL` and a reachable Lotus RPC.
-- `test/role-check.db.test.ts` runs `checkQueryRole` against real roles when `ROLE_CHECK_DATABASE_URL` names a superuser on a disposable cluster; it creates and drops roles. CI provides one. Locally: `docker run --rm -d -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=x postgres:18`, then `ROLE_CHECK_DATABASE_URL=postgres://postgres:x@127.0.0.1:55432/postgres npm test`. Add a case there for every privilege the check learns to reject.
+- `test/role-check.db.test.ts` runs `checkQueryRole` against real roles when `ROLE_CHECK_DATABASE_URL` names a superuser on a disposable cluster; it creates and drops roles. CI provides one. Locally: `docker run --rm -d -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=x postgres:18`, then `ROLE_CHECK_DATABASE_URL=postgres://postgres:x@127.0.0.1:55432/postgres npm test`. Run `npm run test:bootstrap` with the same URL after that suite, not concurrently: it exercises the real publication trigger and both suites create roles.
 - `test/proving-client.test.ts` runs the provider and network queries against PostgreSQL when `PROVING_QUERY_DATABASE_URL` is set. Use the same disposable cluster as the role checks; the suite creates and drops its own database.
-- A validator change can reject queries agents already rely on. Besides unit tests, replay real queries: in a deployment's `logs/foc-observer.jsonl`, the `type: "sql"` entries without an `error` all passed the validator that was live when they ran.
+- A validator change can reject queries agents already rely on. Besides unit tests, replay real queries: in `docker compose logs --no-log-prefix foc-observer`, the `type: "sql"` entries without an `error` all passed the validator that was live when they ran.
 
 Iterate with the smallest relevant test, and report the checks you didn't run.
 
@@ -75,7 +76,7 @@ Iterate with the smallest relevant test, and report the checks you didn't run.
 
 | Component | Code source | Applying a change |
 |---|---|---|
-| `foc-observer` (server) | Built into the image | `docker compose build foc-observer && docker compose up -d foc-observer` |
+| `foc-observer` (server) | Built into the image | With the base Compose file, rebuild and recreate the service. For an image-pinned deployment, follow [REINDEX.md](REINDEX.md) and pair its image with the grant manifest. |
 | `ponder-*` indexing code (`src/`, `abis/`, `ponder.schema.ts`) | Volume-mounted from the checkout | Picked up on the next restart, whatever its cause |
 | `ponder-*` config and Ponder package (`ponder.config.ts`, `package.json`) | Built into the image | `docker compose build --no-cache ponder-<network>`, then `docker compose up -d --force-recreate ponder-<network>` |
 
@@ -89,7 +90,7 @@ Follow the [single-network reindex runbook](REINDEX.md) for preflight, checkpoin
 
 ## Logging
 
-`logger.ts` writes JSON lines to stdout, and to `FOC_LOG_PATH` when set (Compose maps it to `logs/foc-observer.jsonl`). Entry types are `mcp` (tool, parameters, duration, result size, error, caller user agent and `X-Real-IP`), `sql` (query text up to 2,000 characters, network, rows, duration, tables, a `slow` flag past 500 ms), `rest` (method, path, status, duration) and `startup`. `rest` entries and fast indexer-head polls go to stdout only, so the file holds the analytically useful record. `logger.ts` lists `jq` recipes for it.
+`logger.ts` writes JSON lines to stdout. Compose rotates the server logs. `mcp` records tool, duration and result size. Successful `sql` entries include up to 2,000 query characters and UTF-8 sizes for the compact SQL result (`resultBytes`) and its largest row (`maxRowBytes`). Limit failures record `limitHit`; failed queries omit SQL text. `rest` records method, route pattern and status. `backend` records sanitized diagnostics. Under backpressure the logger drops entries rather than buffering them.
 
 ## Change hygiene
 

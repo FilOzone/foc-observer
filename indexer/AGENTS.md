@@ -46,7 +46,7 @@ ponder.on("PDPVerifier:DataSetDeleted", async ({ event, context }) => {
 ### Adding an event or a contract
 
 1. Get the ABI into `abis/`, by `./scripts/generate-abis.sh [ref]` for filecoin-services contracts or by hand for the rest.
-2. Define the table in `src/schema-defs.ts` and export it from `ponder.schema.ts`.
+2. Define the table in `src/schema-defs.ts` and export it from `ponder.schema.ts`. From the repository root, run `node postgres/generate-public-relations.mjs` and include the regenerated `postgres/public-relations.sql` in the same change.
 3. For a new contract, add its addresses and start block to both networks in `src/networks.ts`, and its entry to `ponder.config.ts`.
 4. Write the handler in the contract's `src/*.ts` file.
 5. Plan a [reindex](../REINDEX.md) when the build ID changes. A newly handled event also needs RPC from its start block, so start its entry at the block the contract began emitting it, as the `*_V*_BLOCK` constants do.
