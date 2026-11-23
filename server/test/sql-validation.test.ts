@@ -286,6 +286,71 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
     expect(() => validateSql("WITH my_cte AS (SELECT 1 as x) SELECT * FROM my_cte")).not.toThrow()
   })
 
+  // -- CTE scoping: a CTE name only whitelists references Postgres resolves to that CTE --
+
+  test("blocks a catalog reached by naming a CTE after it in a sibling subquery", () => {
+    expect(() => validateSql(
+      "SELECT r.rolname FROM (WITH pg_roles AS (SELECT 1 AS x) SELECT * FROM pg_roles) a, pg_roles r",
+    )).toThrow(/"pg_roles" is not a known FOC event table/)
+  })
+
+  test("blocks a catalog reached by naming a CTE after it in a sibling CTE", () => {
+    expect(() => validateSql(
+      "WITH a AS (WITH pg_roles AS (SELECT 1) SELECT 1), b AS (SELECT rolname FROM pg_roles) SELECT * FROM b",
+    )).toThrow(/"pg_roles" is not a known FOC event table/)
+  })
+
+  test("blocks a CTE body referencing its own name", () => {
+    expect(() => validateSql(
+      "WITH pg_roles AS (SELECT rolname FROM pg_roles) SELECT * FROM pg_roles",
+    )).toThrow(/"pg_roles" is not a known FOC event table/)
+  })
+
+  test("blocks a CTE body referencing a later sibling's name", () => {
+    expect(() => validateSql(
+      "WITH a AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1 AS x) SELECT * FROM a",
+    )).toThrow(/"pg_roles" is not a known FOC event table/)
+  })
+
+  test("allows a CTE body referencing an earlier sibling", () => {
+    expect(() => validateSql("WITH a AS (SELECT 1 AS x), b AS (SELECT x FROM a) SELECT * FROM b")).not.toThrow()
+  })
+
+  test("allows subqueries to reference an enclosing CTE", () => {
+    expect(() => validateSql(
+      "WITH a AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM a) s WHERE EXISTS (SELECT 1 FROM a)",
+    )).not.toThrow()
+  })
+
+  test("allows set-operation branches to reference the enclosing CTE", () => {
+    expect(() => validateSql("WITH a AS (SELECT 1 AS x) SELECT x FROM a UNION ALL SELECT x FROM a")).not.toThrow()
+  })
+
+  test("allows a parenthesised set-operation branch with its own CTE", () => {
+    expect(() => validateSql(
+      "(WITH a AS (SELECT 1 AS x) SELECT x FROM a) UNION ALL SELECT set_id FROM pdp_data_set_created",
+    )).not.toThrow()
+  })
+
+  test("blocks CTE SEARCH and CYCLE clauses", () => {
+    expect(() => validateSql("WITH a AS (SELECT 1 AS x) SEARCH DEPTH FIRST BY x SET ord SELECT * FROM a")).toThrow(/SEARCH and CYCLE/)
+    expect(() => validateSql("WITH a AS (SELECT 1 AS x) CYCLE x SET c USING p SELECT * FROM a")).toThrow(/SEARCH and CYCLE/)
+  })
+
+  test("validates deeply nested WITH in linear time", () => {
+    let sql = "SELECT 1"
+    for (let i = 0; i < 200; i++) sql = `WITH a AS (${sql}) SELECT 1`
+    const start = performance.now()
+    validateSql(sql)
+    expect(performance.now() - start).toBeLessThan(500)
+  })
+
+  test("blocks a set-operation branch borrowing a CTE from its sibling", () => {
+    expect(() => validateSql(
+      "(WITH pg_roles AS (SELECT 1 AS x) SELECT x FROM pg_roles) UNION ALL (SELECT 1 FROM pg_roles)",
+    )).toThrow(/"pg_roles" is not a known FOC event table/)
+  })
+
   // -- Recursive CTEs blocked --
 
   test("blocks WITH RECURSIVE", () => {
@@ -314,6 +379,52 @@ describe("SQL validation (libpg-query AST allow-list)", () => {
 
   test("allows OVERLAY", () => {
     expect(() => validateSql("SELECT OVERLAY(source PLACING 'x' FROM 1 FOR 1) FROM fwss_data_set_created")).not.toThrow()
+  })
+
+  test("allows the remaining SQL-syntax forms", () => {
+    expect(() => validateSql("SELECT SUBSTRING(source FROM 2 FOR 3) FROM fwss_data_set_created")).not.toThrow()
+    expect(() => validateSql("SELECT TRIM(BOTH 'x' FROM source), TRIM(LEADING FROM source), TRIM(TRAILING FROM source) FROM fwss_data_set_created")).not.toThrow()
+    expect(() => validateSql("SELECT NORMALIZE(source), source IS NORMALIZED FROM fwss_data_set_created")).not.toThrow()
+    expect(() => validateSql("SELECT TO_TIMESTAMP(timestamp) AT TIME ZONE 'UTC' FROM fp_deposit")).not.toThrow()
+    expect(() => validateSql("SELECT (TO_TIMESTAMP(1), TO_TIMESTAMP(2)) OVERLAPS (TO_TIMESTAMP(1), TO_TIMESTAMP(3))")).not.toThrow()
+  })
+
+  test("blocks SYSTEM_USER", () => {
+    expect(() => validateSql("SELECT SYSTEM_USER")).toThrow(/SYSTEM_USER is not allowed/)
+  })
+
+  test("blocks COLLATION FOR", () => {
+    expect(() => validateSql("SELECT COLLATION FOR (source) FROM fwss_data_set_created")).toThrow(/PG_COLLATION_FOR is not allowed/)
+  })
+
+  // -- Cast and column types --
+
+  test("allows analytical cast types", () => {
+    expect(() => validateSql(
+      "SELECT amount::numeric, amount::numeric(40, 0), rail_id::bigint, rail_id::int, rail_id::smallint, amount::float8, amount::double precision, amount::real, " +
+      "token::text, token::varchar(42), token::char(1), (amount > 0)::boolean, (amount > 0)::bool, " +
+      "TO_TIMESTAMP(timestamp)::date, TO_TIMESTAMP(timestamp)::timestamp, TO_TIMESTAMP(timestamp)::timestamptz, TO_TIMESTAMP(timestamp)::time, " +
+      "INTERVAL '1 day', DATE '2026-01-01', '{}'::jsonb, '{}'::json, decode('00', 'hex')::bytea, ARRAY[rail_id]::int8[], CAST(amount AS numeric) " +
+      "FROM fp_deposit",
+    )).not.toThrow()
+  })
+
+  test.each(["regclass", "regrole", "regproc", "regprocedure", "regnamespace", "regtype", "regoper", "regcollation", "regconfig", "oid"])(
+    "blocks casts to %s",
+    (type) => {
+      expect(() => validateSql(`SELECT 'pg_roles'::${type}`)).toThrow(new RegExp(`Type ${type} is not allowed`))
+    },
+  )
+
+  test("blocks catalog enumeration through regclass", () => {
+    expect(() => validateSql("SELECT g::regclass::text FROM generate_series(1, 20000) g")).toThrow(/Type regclass is not allowed/)
+    expect(() => validateSql("SELECT CAST('pg_roles' AS regclass)")).toThrow(/Type regclass is not allowed/)
+  })
+
+  test("blocks qualified and quoted type names outside pg_catalog's allowed types", () => {
+    expect(() => validateSql("SELECT 'x'::pg_catalog.regclass")).toThrow(/Type pg_catalog.regclass is not allowed/)
+    expect(() => validateSql("SELECT 'x'::public.text")).toThrow(/Type public.text is not allowed/)
+    expect(() => validateSql(`SELECT 'x'::"Text"`)).toThrow(/Type Text is not allowed/)
   })
 
   // -- Dangerous functions --

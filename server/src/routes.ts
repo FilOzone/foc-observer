@@ -13,6 +13,7 @@ import { DealbotClient } from "./dealbot-client.js"
 import { BetterStackClient, parseBucket } from "./betterstack-client.js"
 import { SubgraphClient } from "./subgraph-client.js"
 import { ProvingClient } from "./proving-client.js"
+import { InputError } from "./inputs.js"
 import type { NetworkName } from "./networks.js"
 import { logRest, logSql } from "./logger.js"
 import { sqlNotices } from "./tripwires.js"
@@ -33,6 +34,11 @@ function sanitizeError(err: unknown): string {
   // Strip Postgres connection details that might leak in error messages
   return msg.replace(/postgres:\/\/[^\s]+/g, "postgres://***")
     .replace(/password[=:]\s*\S+/gi, "password=***")
+}
+
+/** 400 for malformed caller input, 500 for anything else. */
+function errorStatus(err: unknown): 400 | 500 {
+  return err instanceof InputError ? 400 : 500
 }
 
 export function createRoutes(backends: Backends): Hono {
@@ -290,7 +296,7 @@ export function createRoutes(backends: Backends): Hono {
       if (!health) return c.json({ network, error: `Provider "${address}" not found.` }, 404)
       return c.json({ network, ...health })
     } catch (err) {
-      return c.json({ error: sanitizeError(err) }, 500)
+      return c.json({ error: sanitizeError(err) }, errorStatus(err))
     }
   })
 
@@ -304,7 +310,7 @@ export function createRoutes(backends: Backends): Hono {
       if (!dataset) return c.json({ network, error: `Dataset "${c.req.param("setId")}" not found.` }, 404)
       return c.json({ network, ...dataset })
     } catch (err) {
-      return c.json({ error: sanitizeError(err) }, 500)
+      return c.json({ error: sanitizeError(err) }, errorStatus(err))
     }
   })
 
@@ -334,7 +340,7 @@ export function createRoutes(backends: Backends): Hono {
       if (!health) return c.json({ network, error: `Provider not found in subgraph.` }, 404)
       return c.json({ network, source: "goldsky-subgraph", ...health })
     } catch (err) {
-      return c.json({ error: sanitizeError(err) }, 500)
+      return c.json({ error: sanitizeError(err) }, errorStatus(err))
     }
   })
 
@@ -380,7 +386,7 @@ export function createRoutes(backends: Backends): Hono {
     try {
       return c.json(await dealbot.getProviderWindow(network, c.req.param("addr"), preset))
     } catch (err) {
-      return c.json({ error: sanitizeError(err) }, 500)
+      return c.json({ error: sanitizeError(err) }, errorStatus(err))
     }
   })
 

@@ -73,16 +73,34 @@ await initParser()
 logStartup(PORT, ALL_NETWORKS, !!betterstack)
 console.log(`foc-observer server starting on port ${PORT}`)
 
-for (const [name, client] of ponderClients) {
-  const config = client.network
-  const dsn = config.queryDatabaseUrl.replace(/\/\/([^:@/]+):[^@]*@/, "//$1:***@")
-  console.log(`  ${name}: postgres=${dsn} rpc=${config.rpcUrl}`)
-  if (config.queryDatabaseUrl === config.databaseUrl) {
-    console.warn(
-      `  WARNING: ${name} queries run as the database owner. ` +
-        `Set FOC_${name.toUpperCase()}_QUERY_DATABASE_URL to the foc_observer_query role.`,
-    )
+/** Host of a URL for logs; connection URLs can carry credentials in userinfo, path or query. */
+function urlHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return "(unparseable URL)"
   }
+}
+
+// Caller SQL must run as a role that can only read the public views. Refuse to
+// start when the role is privileged or cannot be checked.
+for (const [name, client] of ponderClients) {
+  const envVar = `FOC_${name.toUpperCase()}_QUERY_DATABASE_URL`
+  let check: { role: string; problems: string[] }
+  try {
+    check = await client.checkQueryRole()
+  } catch (err) {
+    console.error(`${name}: refusing to start, cannot verify the query role: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+  if (check.problems.length > 0) {
+    console.error(
+      `${name}: refusing to start, query role "${check.role}" is privileged (${check.problems.join("; ")}). ` +
+        `Set ${envVar} to the restricted foc_observer_query role.`,
+    )
+    process.exit(1)
+  }
+  console.log(`  ${name}: query role "${check.role}" verified, rpc host ${urlHost(client.network.rpcUrl)}`)
 }
 console.log(`  BetterStack: ${betterstack ? "configured" : "not configured (set BETTERSTACK_CH_USER/PASSWORD)"}`)
 if (process.env.FOC_LOG_PATH) console.log(`  Log file: ${process.env.FOC_LOG_PATH}`)

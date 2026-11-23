@@ -37,7 +37,10 @@ vi.mock("pg", () => {
 })
 
 // Import after mock is set up
-const { PonderClient } = await import("../src/ponder-client.js")
+const { PonderClient, queryRoleProblems } = await import("../src/ponder-client.js")
+
+const QUERY_URL = "postgres://foc_observer_query@database/ponder"
+const QUERY_CONFIG = getNetworkConfig("calibnet", { queryDatabaseUrl: QUERY_URL })
 
 /** Set up mock for the 6-step cursor query pipeline: BEGIN, SET, DECLARE, FETCH, CLOSE, COMMIT */
 function mockCursorQuery(fetchResult: { fields: Array<{ name: string }>; rows: Record<string, unknown>[] }) {
@@ -57,17 +60,15 @@ describe("PonderClient.querySql", () => {
     mockQuery.mockReset()
     mockRelease.mockReset()
     poolConnectionStrings.length = 0
-    client = new PonderClient(getNetworkConfig("calibnet"))
+    client = new PonderClient(QUERY_CONFIG)
   })
 
-  test("connects with the query role, not the owner", () => {
-    poolConnectionStrings.length = 0
-    client = new PonderClient(getNetworkConfig("calibnet", {
-      databaseUrl: "postgres://admin@database/ponder",
-      queryDatabaseUrl: "postgres://reader@database/ponder",
-    }))
+  test("connects with the query database URL", () => {
+    expect(poolConnectionStrings).toEqual([QUERY_URL])
+  })
 
-    expect(poolConnectionStrings).toEqual(["postgres://reader@database/ponder"])
+  test("requires a query database URL", () => {
+    expect(() => new PonderClient({ ...QUERY_CONFIG, queryDatabaseUrl: undefined })).toThrow(/FOC_CALIBNET_QUERY_DATABASE_URL is not set/)
   })
 
   test("uses cursor-based query pipeline", async () => {
@@ -156,5 +157,118 @@ describe("PonderClient.querySql", () => {
     // Should NOT have DECLARE/FETCH/CLOSE calls
     expect(mockQuery).toHaveBeenCalledTimes(4)
     expect(mockQuery).toHaveBeenNthCalledWith(3, "EXPLAIN SELECT * FROM fp_deposit")
+  })
+})
+
+describe("PonderClient.queryInternal", () => {
+  let client: InstanceType<typeof PonderClient>
+
+  beforeEach(() => {
+    mockQuery.mockReset()
+    mockRelease.mockReset()
+    client = new PonderClient(QUERY_CONFIG)
+  })
+
+  test("binds params inside a read-only transaction", async () => {
+    mockQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({}) // SET
+      .mockResolvedValueOnce({ fields: [{ name: "set_id" }], rows: [{ set_id: 42n }] })
+      .mockResolvedValueOnce({}) // COMMIT
+
+    const sql = "SELECT set_id FROM pdp_data_set_created WHERE set_id = $1"
+    const result = await client.queryInternal(sql, ["42"])
+
+    expect(mockQuery).toHaveBeenNthCalledWith(1, "BEGIN TRANSACTION READ ONLY")
+    expect(mockQuery).toHaveBeenNthCalledWith(3, sql, ["42"])
+    expect(result.rows).toEqual([{ set_id: "42" }])
+  })
+
+  test("rejects SQL the validator rejects, before touching the pool", async () => {
+    await expect(client.queryInternal("SELECT * FROM pg_roles")).rejects.toThrow(/not a known FOC event table/)
+    await expect(client.queryInternal("SELECT 1; SELECT 2")).rejects.toThrow(/Multiple statements/)
+    await expect(client.queryInternal("SELECT pg_read_file('/etc/passwd')")).rejects.toThrow(/not allowed/)
+    expect(mockQuery).not.toHaveBeenCalled()
+  })
+})
+
+describe("query role check", () => {
+  const RESTRICTED = {
+    login: "foc_observer_query",
+    role: "foc_observer_query",
+    rolsuper: false,
+    rolcreaterole: false,
+    rolcreatedb: false,
+    rolreplication: false,
+    rolbypassrls: false,
+    db_create: false,
+    db_temp: false,
+    member_of: [],
+    create_schemas: [],
+    usage_schemas: [],
+    write_schemas: [],
+  }
+
+  test("the provisioned role has no problems", () => {
+    expect(queryRoleProblems(RESTRICTED)).toEqual([])
+  })
+
+  test("reports each privilege", () => {
+    expect(queryRoleProblems({
+      login: "ponder",
+      role: "ponder",
+      rolsuper: true,
+      rolcreaterole: true,
+      rolcreatedb: true,
+      rolreplication: true,
+      rolbypassrls: true,
+      db_create: true,
+      db_temp: true,
+      member_of: ["pg_monitor", "pg_read_server_files"],
+      create_schemas: ["public"],
+      usage_schemas: ["data_v3", "ponder_sync"],
+      write_schemas: ["data_v3", "public"],
+    })).toEqual([
+      'logged in as "ponder", not foc_observer_query',
+      "superuser",
+      "CREATEROLE",
+      "CREATEDB",
+      "REPLICATION",
+      "BYPASSRLS",
+      "CREATE on the database",
+      "TEMPORARY on the database",
+      "member of pg_monitor, pg_read_server_files",
+      "CREATE on schema public",
+      "USAGE on schema data_v3, ponder_sync",
+      "owns or can modify relations in data_v3, public",
+    ])
+  })
+
+  test("rejects a write grant outside public", () => {
+    expect(queryRoleProblems({ ...RESTRICTED, write_schemas: ["data_v3"] })).toEqual([
+      "owns or can modify relations in data_v3",
+    ])
+  })
+
+  test("rejects an otherwise restricted role under another name", () => {
+    expect(queryRoleProblems({ ...RESTRICTED, login: "reader", role: "reader" })).toEqual([
+      'logged in as "reader", not foc_observer_query',
+    ])
+  })
+
+  test("rejects a privileged login that switched to the query role", () => {
+    expect(queryRoleProblems({ ...RESTRICTED, login: "ponder" })).toEqual(['logged in as "ponder", not foc_observer_query'])
+  })
+
+  test("checkQueryRole reads the connected role", async () => {
+    mockQuery.mockReset()
+    mockQuery.mockResolvedValueOnce({ rows: [{ ...RESTRICTED, usage_schemas: ["ponder_sync"] }] })
+    const client = new PonderClient(QUERY_CONFIG)
+
+    await expect(client.checkQueryRole()).resolves.toEqual({
+      role: "foc_observer_query",
+      problems: ["USAGE on schema ponder_sync"],
+    })
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining("WHERE r.rolname = current_user"))
   })
 })

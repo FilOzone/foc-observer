@@ -84,9 +84,7 @@ export function validateSql(sql: string): { isExplain: boolean; sql: string } {
     throw new Error(`Only SELECT, WITH, and EXPLAIN queries are allowed. Got: ${stmtType.replace("Stmt", "").toUpperCase()}.`)
   }
 
-  // Collect CTE names so we can distinguish them from real table references
-  const cteNames = new Set<string>()
-  validateSelect(stmt.SelectStmt as Record<string, unknown>, cteNames)
+  validateSelect(stmt.SelectStmt as Record<string, unknown>, new Set())
   return { isExplain: false, sql: cleaned }
 }
 
@@ -112,7 +110,13 @@ function validateExplain(node: Record<string, unknown>): void {
   validateSelect(query.SelectStmt as Record<string, unknown>, new Set())
 }
 
-function validateSelect(node: Record<string, unknown>, cteNames: Set<string>): void {
+/**
+ * Validate one SELECT. `visibleCtes` holds the CTE names in scope from
+ * enclosing queries. Names this SELECT defines are added to a copy, so they
+ * never leak into sibling subqueries, where the same name would resolve to a
+ * real relation (pg_catalog is searched implicitly).
+ */
+function validateSelect(node: Record<string, unknown>, visibleCtes: ReadonlySet<string>): void {
   // Reject SELECT INTO (creates a table)
   if (node.intoClause) {
     throw new Error("SELECT INTO is not allowed.")
@@ -123,11 +127,10 @@ function validateSelect(node: Record<string, unknown>, cteNames: Set<string>): v
     throw new Error("FOR UPDATE / FOR SHARE is not allowed.")
   }
 
-  // UNION / INTERSECT / EXCEPT: validate both sides
-  if (node.larg) validateSelect(node.larg as Record<string, unknown>, cteNames)
-  if (node.rarg) validateSelect(node.rarg as Record<string, unknown>, cteNames)
+  const cteNames = new Set(visibleCtes)
 
-  // WITH clause (CTEs) -- collect names, reject RECURSIVE
+  // WITH clause (CTEs): reject RECURSIVE. Each name is registered after its own
+  // body is checked, so a body sees only earlier siblings, as in Postgres.
   if (node.withClause) {
     const wc = node.withClause as Record<string, unknown>
 
@@ -140,11 +143,14 @@ function validateSelect(node: Record<string, unknown>, cteNames: Set<string>): v
       for (const cte of ctes) {
         const cteExpr = cte.CommonTableExpr as Record<string, unknown>
         if (cteExpr) {
-          // Register CTE name so table validation knows it's not a real table
-          const cteName = cteExpr.ctename as string | undefined
-          if (cteName) cteNames.add(cteName)
+          if (cteExpr.search_clause || cteExpr.cycle_clause) {
+            throw new Error("CTE SEARCH and CYCLE clauses are not allowed.")
+          }
 
-          const cteQuery = cteExpr.ctequery as Record<string, unknown>
+          const { ctequery, ...cteRest } = cteExpr
+          walkNode(cteRest, cteNames)
+
+          const cteQuery = ctequery as Record<string, unknown> | undefined
           if (cteQuery) {
             const cteType = Object.keys(cteQuery)[0]
             if (cteType !== "SelectStmt") {
@@ -152,13 +158,23 @@ function validateSelect(node: Record<string, unknown>, cteNames: Set<string>): v
             }
             validateSelect(cteQuery.SelectStmt as Record<string, unknown>, cteNames)
           }
+
+          const cteName = cteExpr.ctename as string | undefined
+          if (cteName) cteNames.add(cteName)
         }
       }
     }
   }
 
-  // Walk all expressions in the SELECT
-  walkNode(node, cteNames)
+  // UNION / INTERSECT / EXCEPT: both sides see this SELECT's CTEs
+  if (node.larg) validateSelect(node.larg as Record<string, unknown>, cteNames)
+  if (node.rarg) validateSelect(node.rarg as Record<string, unknown>, cteNames)
+
+  // Walk the remaining clauses. The WITH clause and set-operation branches were
+  // validated above with their own scopes; walking them again would apply the
+  // wrong scope and revisit every nested CTE body, doubling the work per level.
+  const { withClause: _withClause, larg: _larg, rarg: _rarg, ...clauses } = node
+  walkNode(clauses, cteNames)
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +297,35 @@ const ALLOWED_FUNCTIONS = new Set([
   "octet_length", "bit_length",
 ])
 
-function walkNode(node: unknown, cteNames: Set<string>): void {
+// Functions the parser generates from standard SQL syntax (EXTRACT, TRIM,
+// AT TIME ZONE, OVERLAPS, ...). SYSTEM_USER, COLLATION FOR and XMLEXISTS arrive
+// the same way and are left out: SYSTEM_USER reveals the login role and auth method.
+const SQL_SYNTAX_FUNCTIONS = new Set([
+  "extract", "overlay", "position", "substring",
+  "btrim", "ltrim", "rtrim",
+  "normalize", "is_normalized", "timezone", "overlaps",
+])
+
+// Types a cast or column definition may name. Object identifier types
+// (regclass, regrole, ...) resolve catalog names independently of the table
+// allow-list, so they stay out.
+const ALLOWED_TYPES = new Set([
+  "int2", "int4", "int8", "numeric", "float4", "float8",
+  "text", "varchar", "bpchar", "bool",
+  "date", "time", "timetz", "timestamp", "timestamptz", "interval",
+  "json", "jsonb", "bytea",
+])
+
+/** Accepts allowed types, unqualified or in pg_catalog (where SQL keyword types land). */
+function validateTypeName(node: Record<string, unknown>): void {
+  const names = ((node.names ?? []) as Array<{ String?: { sval?: string } }>).map((n) => n.String?.sval ?? "")
+  const name = names.length === 1 ? names[0] : names.length === 2 && names[0] === "pg_catalog" ? names[1] : undefined
+  if (!name || !ALLOWED_TYPES.has(name)) {
+    throw new Error(`Type ${names.join(".")} is not allowed.`)
+  }
+}
+
+function walkNode(node: unknown, cteNames: ReadonlySet<string>): void {
   if (node === null || node === undefined) return
   if (typeof node !== "object") return
 
@@ -306,6 +350,11 @@ function walkNode(node: unknown, cteNames: Set<string>): void {
       continue
     }
 
+    // Cast and column-definition targets arrive unwrapped under `typeName`
+    if (key === "typeName" && typeof value === "object" && value !== null) {
+      validateTypeName(value as Record<string, unknown>)
+    }
+
     // Recognized AST node type: check if allowed
     if (key[0] >= "A" && key[0] <= "Z" && typeof value === "object" && value !== null) {
       if (!ALLOWED_NODE_TYPES.has(key)) {
@@ -317,6 +366,8 @@ function walkNode(node: unknown, cteNames: Set<string>): void {
         validateFuncCall(value as Record<string, unknown>)
       } else if (key === "RangeVar") {
         validateTableRef(value as Record<string, unknown>, cteNames)
+      } else if (key === "TypeName") {
+        validateTypeName(value as Record<string, unknown>)
       } else if (key === "SelectStmt") {
         // Nested select: validate fully (inherits CTE names from parent scope)
         validateSelect(value as Record<string, unknown>, cteNames)
@@ -334,7 +385,7 @@ function validateFuncCall(node: Record<string, unknown>): void {
 
   // The Postgres parser rewrites standard SQL syntax like EXTRACT(), OVERLAY(),
   // POSITION() into pg_catalog-qualified calls with funcformat = "COERCE_SQL_SYNTAX".
-  // These are safe builtins written in standard SQL, not explicit schema-qualified calls.
+  // Only the forms in SQL_SYNTAX_FUNCTIONS are accepted.
   const isSqlSyntax = node.funcformat === "COERCE_SQL_SYNTAX"
 
   // Reject explicit schema-qualified function calls (e.g. public.lower()).
@@ -348,16 +399,19 @@ function validateFuncCall(node: Record<string, unknown>): void {
   const name = funcname[funcname.length - 1]?.String?.sval?.toLowerCase()
   if (!name) return
 
-  // SQL-syntax builtins (EXTRACT, POSITION, OVERLAY, TRIM, etc.) are always safe --
-  // the parser generated the pg_catalog qualification, the user wrote standard SQL.
-  if (isSqlSyntax) return
+  if (isSqlSyntax) {
+    if (!SQL_SYNTAX_FUNCTIONS.has(name)) {
+      throw new Error(`${name.toUpperCase()} is not allowed.`)
+    }
+    return
+  }
 
   if (!ALLOWED_FUNCTIONS.has(name)) {
     throw new Error(`Function ${name}() is not allowed. Only safe read-only functions are permitted.`)
   }
 }
 
-function validateTableRef(node: Record<string, unknown>, cteNames: Set<string>): void {
+function validateTableRef(node: Record<string, unknown>, cteNames: ReadonlySet<string>): void {
   const relname = node.relname as string | undefined
   if (!relname) return
 

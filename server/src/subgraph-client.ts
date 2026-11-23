@@ -9,6 +9,7 @@
  * Public, unauthenticated GraphQL. No credentials needed.
  */
 
+import { parseAddress, parseSetId, parseWeeks } from "./inputs.js"
 import type { NetworkName, NetworkConfig } from "./networks.js"
 
 // Cache TTLs
@@ -152,12 +153,13 @@ export class SubgraphClient {
   }
 
   async getProvider(network: NetworkName, address: string): Promise<SubgraphProvider | null> {
-    const cacheKey = `${network}:provider:${address.toLowerCase()}`
+    const addr = parseAddress(address)
+    const cacheKey = `${network}:provider:${addr}`
     const cached = this.getCached<SubgraphProvider | null>(cacheKey)
     if (cached !== undefined) return cached
 
     const data = await this.query(network, `{
-      provider(id: "${address.toLowerCase()}") {
+      provider(id: "${addr}") {
         id address
         totalFaultedPeriods totalProvingPeriods
         totalFaultedRoots totalProofSets totalRoots totalDataSize
@@ -188,16 +190,18 @@ export class SubgraphClient {
   }
 
   async getProviderWeekly(network: NetworkName, address: string, weeks: number = 4): Promise<WeeklyActivity[]> {
-    const cacheKey = `${network}:weekly:${address.toLowerCase()}:${weeks}`
+    const addr = parseAddress(address)
+    const weekCount = parseWeeks(weeks)
+    const cacheKey = `${network}:weekly:${addr}:${weekCount}`
     const cached = this.getCached<WeeklyActivity[]>(cacheKey)
     if (cached) return cached
 
     const data = await this.query(network, `{
       weeklyProviderActivities(
-        first: ${weeks}
+        first: ${weekCount}
         orderBy: id
         orderDirection: desc
-        where: { providerId: "${address.toLowerCase()}" }
+        where: { providerId: "${addr}" }
       ) {
         id
         totalFaultedPeriods totalProofs
@@ -227,14 +231,15 @@ export class SubgraphClient {
   }
 
   async getProviderDatasets(network: NetworkName, address: string): Promise<SubgraphDataSet[]> {
-    const cacheKey = `${network}:datasets:${address.toLowerCase()}`
+    const addr = parseAddress(address)
+    const cacheKey = `${network}:datasets:${addr}`
     const cached = this.getCached<SubgraphDataSet[]>(cacheKey)
     if (cached) return cached
 
     const data = await this.query(network, `{
       dataSets(
         first: 100
-        where: { owner: "${address.toLowerCase()}" }
+        where: { owner: "${addr}" }
         orderBy: setId
         orderDirection: desc
       ) {
@@ -264,12 +269,13 @@ export class SubgraphClient {
   }
 
   async getDataset(network: NetworkName, setId: string): Promise<SubgraphDataSet | null> {
-    const cacheKey = `${network}:dataset:${setId}`
+    const id = parseSetId(setId)
+    const cacheKey = `${network}:dataset:${id}`
     const cached = this.getCached<SubgraphDataSet | null>(cacheKey)
     if (cached !== undefined) return cached
 
     const data = await this.query(network, `{
-      dataSets(where: { setId: ${setId} }) {
+      dataSets(where: { setId: ${id} }) {
         setId isActive provenThisPeriod nextDeadline lastProvenEpoch
         currentDeadlineCount totalFaultedPeriods totalProofs
         totalRoots totalDataSize leafCount
@@ -303,12 +309,14 @@ export class SubgraphClient {
 
   /** Full proving health for one provider: aggregates + weekly breakdown + per-dataset status. */
   async getProviderProvingHealth(network: NetworkName, address: string, weeks: number = 4): Promise<ProviderProvingHealth | null> {
-    const provider = await this.getProvider(network, address)
+    const addr = parseAddress(address)
+    const weekCount = parseWeeks(weeks)
+    const provider = await this.getProvider(network, addr)
     if (!provider) return null
 
     const [weeklyActivity, datasets] = await Promise.all([
-      this.getProviderWeekly(network, address, weeks),
-      this.getProviderDatasets(network, address),
+      this.getProviderWeekly(network, addr, weekCount),
+      this.getProviderDatasets(network, addr),
     ])
 
     return { provider, weeklyActivity, datasets }

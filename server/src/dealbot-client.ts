@@ -7,12 +7,19 @@
  * Calibnet (staging): https://staging.dealbot.filoz.org/api
  */
 
+import { InputError } from "./inputs.js"
 import type { NetworkName } from "./networks.js"
 
 const DEALBOT_URLS: Record<NetworkName, string> = {
   mainnet: "https://dealbot.filoz.org/api",
   calibnet: "https://staging.dealbot.filoz.org/api",
 }
+
+// Provider reference in a DealBot path segment: an address or ID, never a
+// separator or dot segment.
+const PROVIDER_REF_RE = /^[0-9A-Za-z]{1,128}$/
+
+const WINDOW_PRESETS = new Set(["1h", "6h", "12h", "24h", "7d", "30d", "90d"])
 
 // DealBot responses are complex nested objects. We pass them through as-is
 // with a network tag. The system context teaches the agent what fields mean.
@@ -45,6 +52,12 @@ export class DealbotClient {
 
   /** Single provider metrics over a time window. Presets: 1h, 6h, 12h, 24h, 7d, 30d, 90d. */
   async getProviderWindow(network: NetworkName, spAddress: string, preset: string = "7d"): Promise<Tagged> {
+    if (!PROVIDER_REF_RE.test(spAddress)) {
+      throw new InputError("Invalid provider: expected an address or ID.")
+    }
+    if (!WINDOW_PRESETS.has(preset)) {
+      throw new InputError(`Invalid preset: expected one of ${[...WINDOW_PRESETS].join(", ")}.`)
+    }
     return this.get(network, `/v1/providers/metrics/${spAddress}/window?preset=${preset}`)
   }
 
