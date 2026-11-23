@@ -1,60 +1,47 @@
-import { describe, expect, test } from "vitest"
-import { INSTRUCTIONS, SYSTEM_CONTEXT } from "../src/system-context.js"
-import { formatTableList } from "../src/table-metadata.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import { afterAll, beforeAll, expect, test, vi } from "vitest"
+import { createMcpServer } from "../src/mcp-handler.js"
+import { resolveSystemContext } from "../../shared/system-context.js"
 
-/**
- * Claude Code (and similar MCP clients) cap individual tool result sizes.
- * Default cap is 25,000 tokens; Claude Code's internal char-to-token estimate
- * is ~3 chars/token, giving a hard ceiling of ~75,000 chars. Our
- * get_system_context tool returns SYSTEM_CONTEXT verbatim plus JSON envelope
- * overhead (~3KB), so we keep the body well under the ceiling.
- *
- * If this test fails, trim SYSTEM_CONTEXT before merging. Don't bump the
- * threshold without checking that real Claude Code clients still accept the
- * payload.
- *
- * Reference: https://github.com/anthropics/claude-code/issues/4002
- */
-const TOKEN_LIMIT = 25_000
-const CHARS_PER_TOKEN = 3
-const SAFETY_MARGIN = 0.85 // leave 15% headroom for JSON envelope + future content
-const SYSTEM_CONTEXT_MAX_CHARS = Math.floor(TOKEN_LIMIT * CHARS_PER_TOKEN * SAFETY_MARGIN)
+const client = new Client({ name: "context-size-check", version: "1" })
 
-// INSTRUCTIONS is loaded by every MCP client at session start, so it counts
-// toward both the system-prompt budget and the user-visible context. Keep it
-// modest. No published Claude Code limit, so this is a sensibility check.
-const INSTRUCTIONS_MAX_CHARS = 15_000
+beforeAll(async () => {
+  vi.stubEnv("FOC_API_URL", "https://observer.example.org")
+  const server = createMcpServer(new Map(), new Map())
+  const [local, remote] = InMemoryTransport.createLinkedPair()
+  await server.connect(remote)
+  await client.connect(local)
+})
 
-// formatTableList() builds the query_sql tool description from every table's
-// description, so it too is loaded into every MCP session. This cap (~7k
-// tokens) is a growth tripwire, not a client limit: adding tables should be a
-// conscious decision, not a silent drift in per-session overhead.
-// Roughly one more service's worth of tables above today's ~18.5k; raise deliberately.
-const TABLE_LIST_MAX_CHARS = 22_000
+afterAll(async () => {
+  await client.close()
+  vi.unstubAllEnvs()
+})
 
-describe("system-context size budget", () => {
-  test(`SYSTEM_CONTEXT is under ${SYSTEM_CONTEXT_MAX_CHARS} chars (~${TOKEN_LIMIT} token MCP cap with ${Math.round((1 - SAFETY_MARGIN) * 100)}% headroom)`, () => {
-    const len = SYSTEM_CONTEXT.length
-    const estimatedTokens = Math.ceil(len / CHARS_PER_TOKEN)
-    expect(
-      len,
-      `SYSTEM_CONTEXT is ${len} chars (~${estimatedTokens} tokens). Trim before merging; Claude Code rejects MCP tool results above ${TOKEN_LIMIT} tokens.`,
-    ).toBeLessThanOrEqual(SYSTEM_CONTEXT_MAX_CHARS)
-  })
+// Count UTF-8 bytes after escaping the result, including its JSON-RPC envelope.
+function wireBytes(result: unknown): number {
+  return Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", id: 1, result }))
+}
 
-  test(`INSTRUCTIONS is under ${INSTRUCTIONS_MAX_CHARS} chars`, () => {
-    const len = INSTRUCTIONS.length
-    expect(
-      len,
-      `INSTRUCTIONS is ${len} chars. Loaded into every MCP session; keep it lean.`,
-    ).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS)
-  })
+test("returns the complete guide in one empty-input call", async () => {
+  const result = await client.callTool({ name: "get_system_context", arguments: {} })
+  expect(result.isError).not.toBe(true)
+  expect(wireBytes(result)).toBeLessThanOrEqual(64 * 1024)
+  const expected = resolveSystemContext()
+  expect(client.getInstructions()).toBe(expected.instructions)
+  expect(Buffer.byteLength(expected.instructions)).toBeLessThanOrEqual(5 * 1024)
 
-  test(`query_sql table list is under ${TABLE_LIST_MAX_CHARS} chars`, () => {
-    const len = formatTableList().length
-    expect(
-      len,
-      `formatTableList() is ${len} chars (~${Math.ceil(len / CHARS_PER_TOKEN)} tokens). Loaded into every MCP session; trim table descriptions or raise the cap deliberately.`,
-    ).toBeLessThanOrEqual(TABLE_LIST_MAX_CHARS)
-  })
+  const content = result.content[0]
+  expect(content.type).toBe("text")
+  if (content.type !== "text") throw new Error("Expected text content")
+  const context = JSON.parse(content.text) as string
+  expect(context).toBe(expected.systemContext)
+  for (const table of ["fp_rail_settled", "fp_one_time_payment", "fwss_data_set_storage_terms_selected"]) {
+    expect(context).toContain(table)
+  }
+})
+
+test("discovery fits in 24 KiB before a client selects any tools", async () => {
+  expect(wireBytes(await client.listTools())).toBeLessThanOrEqual(24 * 1024)
 })

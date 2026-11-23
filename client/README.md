@@ -116,13 +116,15 @@ foc-observer dataset -n mainnet 100
 # Payment rail inspection
 foc-observer rail -n mainnet 100
 
-# Current pricing
+# Current FWSS version, token, storage price and per-dataset monthly fee
 foc-observer pricing -n mainnet
 ```
 
 All commands support `--json` for machine-readable output.
 
-## MCP Tools (20 tools)
+`pricing --json` reports amounts in token base units, with formatted equivalents. A nonempty dataset pays `datasetFeePerMonth` **in addition to** its size-based price. The output also carries egress rates, one-time operation `fees` and `lockups`. For the rate a particular dataset selected, read `dataset <id> --json` and inspect `storageTerms`.
+
+## MCP Tools
 
 When connected as an MCP server, agents get access to:
 
@@ -132,9 +134,9 @@ When connected as an MCP server, agents get access to:
 | Events (SQL) | `query_sql`, `list_tables`, `describe_table`, `get_status` |
 | Contract State | `get_providers`, `get_provider`, `get_dataset`, `get_dataset_proving`, `get_rail`, `get_pricing`, `get_account`, `get_auction` |
 | Quality Metrics | `get_dealbot_stats`, `get_dealbot_providers`, `get_dealbot_provider_detail`, `get_dealbot_daily`, `get_dealbot_failures` |
-| Proving Health | `get_proving_health`, `get_proving_dataset` |
+| Proving Health | `get_proving_health`, `get_proving_dataset`, `get_proving_health_goldsky`, `get_proving_dataset_goldsky` |
 
-The `get_system_context` tool returns comprehensive protocol knowledge that agents need to interpret results correctly. Analytical tools require `i_have_read_the_system_context: true` to confirm context is loaded.
+Call `get_system_context` with `{}` before analytical work to receive the complete protocol and data-interpretation guide. Analytical tools require `i_have_read_the_system_context: true`. Use `describe_table` for field units.
 
 ## What is FOC?
 

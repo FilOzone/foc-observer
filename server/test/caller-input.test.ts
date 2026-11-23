@@ -46,6 +46,7 @@ interface Call {
 function provingClient(): { client: ProvingClient; calls: Call[] } {
   const calls: Call[] = []
   const ponder = {
+    network: { provingPeriodEpochs: 2880, epochDurationSeconds: 30 },
     async queryInternal(sql: string, params: ReadonlyArray<string | number> = []): Promise<SqlResult> {
       validateSql(sql)
       calls.push({ sql, params })

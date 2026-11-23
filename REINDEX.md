@@ -83,6 +83,19 @@ expected=$(deposits "$old")
 [[ $(deposits "$REINDEX_SCHEMA") == "$expected" ]]
 ```
 
+### Historical checks for the FWSS dispatcher and storage terms
+
+Run these against the candidate schema before stopping the live writer. With `db -v s="$REINDEX_SCHEMA"`, `:"s"` is a quoted psql identifier. Repeat through `/sql` after promotion using unqualified table names.
+
+| Network | Query | Expected |
+|---|---|---|
+| Mainnet | `SELECT DISTINCT data_set_id, raw_size FROM :"s".fwss_piece_added WHERE data_set_id IN (1906,1907) AND raw_size IN (6174209750,10469177046)` | Both datasets at 6174209750 bytes; neither at 10469177046. |
+| Mainnet | `SELECT count(*) FROM :"s".fwss_data_set_storage_terms_selected WHERE block_number BETWEEN 6560696 AND 6569926` | 6 selections. |
+| Calibnet | `SELECT data_set_id, storage_terms_id FROM :"s".fwss_data_set_storage_terms_selected WHERE data_set_id BETWEEN 55250 AND 55252` | Only 55252, terms ID zero. All three were created in block 4256439; the first two transactions preceded migration. |
+| Calibnet | `SELECT count(*) FROM :"s".fwss_data_set_storage_terms_selected WHERE block_number BETWEEN 4256439 AND 4269272` | 1554 selections, all zero. Zero is the built-in legacy definition; it has no registration row. |
+
+On calibnet, count the rows by `tx_hash` in `fwss_erc1967_upgraded`, `fwss_diamond_delegate_call` and `fwss_selector_delegated`, respectively. The [1.5 transition](https://filecoin-testnet.blockscout.com/tx/0x8cd0fb616ddd74361813f3fa7815ad31a2412b70bd338175225a37e3ce573a4e) has **2, 1, 73**. The [1.6 migration](https://filecoin-testnet.blockscout.com/tx/0xd87306666a62f0b363e7b1b8c7a651c21916c5106a4e0cb274ffd5317c32cd5e) has **0, 2, 62**. These are counts for the receipts, not for the whole block. Keep the old FWSS and Storacha history checks too: a replacement built against only the latest ABI can pass every new-topic check while losing historical events.
+
 ## Prepare promotion before stopping the live writer
 
 The stock live indexers bind-mount the same checkout. Keep it in place. Give the selected live service a **durable Compose override** that uses the tested image and removes those mounts. This also leaves the old image and sources available for rollback. Create a new file; don't overwrite an existing release file.

@@ -11,7 +11,9 @@ import { PoRepSPRegistryAbi } from "../abis/PoRepSPRegistry.ts"
 import { PoRepSLIOracleAbi } from "../abis/PoRepSLIOracle.ts"
 
 type AbiInput = {
+  name?: string
   type: string
+  indexed?: boolean
   components?: readonly AbiInput[]
 }
 
@@ -49,5 +51,35 @@ test("generated ABIs do not contain duplicate event signatures", () => {
       assert(!signatures.has(signature), `${contract} contains duplicate event ${signature}`)
       signatures.add(signature)
     }
+  }
+})
+
+test("FWSS ABI retains deployed and historical event arguments", () => {
+  const events = new Map(
+    (FilecoinWarmStorageServiceAbi as readonly AbiItem[])
+      .filter(item => item.type === "event")
+      .map(item => [item.name, item]),
+  )
+  const requiredEvents = [
+    ["CDNPaymentTerminated(uint256,uint256,uint256,uint256)", ["dataSetId", "endEpoch", "cacheMissRailId", "cdnRailId"], [true, false, false, false]],
+    ["ContractUpgraded(string,address)", ["version", "implementation"], [false, false]],
+    ["DataSetStorageTermsSelected(uint256,bytes32)", ["dataSetId", "storageTermsId"], [true, true]],
+    ["DiamondDelegateCall(address,bytes)", ["delegate", "delegateCalldata"], [true, false]],
+    ["FilecoinServiceDeployed(string,string)", ["name", "description"], [false, false]],
+    ["PricingUpdated(uint256,uint256)", ["storagePrice", "minimumRate"], [false, false]],
+    ["SelectorDelegated(bytes4,address)", ["selector", "delegate"], [true, true]],
+    ["StorageTermsDisabled(bytes32)", ["storageTermsId"], [true]],
+    ["StorageTermsRegistered(bytes32,(address,uint8,bytes32,uint96))", ["storageTermsId", "terms"], [true, false]],
+    ["Upgraded(address)", ["implementation"], [true]],
+    ["ViewContractSet(address)", ["viewContract"], [true]],
+  ] as const
+
+  for (const [signature, inputNames, indexed] of requiredEvents) {
+    const [name] = signature.split("(")
+    const event = events.get(name)
+    assert(event, `FWSS ABI is missing ${signature}`)
+    assert.equal(`${event.name}(${(event.inputs ?? []).map(canonicalType).join(",")})`, signature)
+    assert.deepEqual((event.inputs ?? []).map(input => input.name), inputNames)
+    assert.deepEqual((event.inputs ?? []).map(input => input.indexed), indexed)
   }
 })

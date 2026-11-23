@@ -188,7 +188,7 @@ export const TABLES: Record<string, TableDef> = {
     columns: {
       dataSetId: { type: "bigint" },
       railId: { type: "bigint" },
-      newRate: { type: "bigint", note: "USDFC/epoch, 18 dec" },
+      newRate: { type: "bigint", note: "rail-token base units/epoch; join fp_rail_created by rail_id for token" },
     },
     indexes: ["dataSetId", "railId", "blockNumber"],
   },
@@ -247,6 +247,65 @@ export const TABLES: Record<string, TableDef> = {
       authorizer: { type: "hex" },
     },
     indexes: ["dataSetId"],
+  },
+  fwss_storage_terms_registered: {
+    description:
+      "Immutable storage terms registered or re-enabled for new datasets. price_per_tib_per_month is in the token's smallest unit at token_decimals, per 2^40-byte TiB per 30-day month. FWSS v1.6.0+.",
+    columns: {
+      storageTermsId: { type: "hex" },
+      token: { type: "hex" },
+      tokenDecimals: { type: "int", note: "decimal places for token amounts" },
+      salt: { type: "hex" },
+      pricePerTibPerMonth: { type: "bigint", note: "token smallest units/TiB/30-day month" },
+      logIndex: { type: "int", note: "raw receipt log index; orders same-block events" },
+    },
+    indexes: ["storageTermsId", "token", "blockNumber"],
+  },
+  fwss_storage_terms_disabled: {
+    description:
+      "Storage terms disabled for new datasets. Existing datasets that selected them retain their immutable definition. FWSS v1.6.0+.",
+    columns: {
+      storageTermsId: { type: "hex" },
+      logIndex: { type: "int", note: "raw receipt log index; orders same-block events" },
+    },
+    indexes: ["storageTermsId", "blockNumber"],
+  },
+  fwss_data_set_storage_terms_selected: {
+    description:
+      "Storage terms selected when a dataset is created. The all-zero ID identifies implicit legacy terms; its selection event remains indexed. FWSS v1.6.0+.",
+    columns: {
+      dataSetId: { type: "bigint" },
+      storageTermsId: { type: "hex" },
+      logIndex: { type: "int", note: "raw receipt log index; orders same-block events" },
+    },
+    indexes: ["dataSetId", "storageTermsId", "blockNumber"],
+  },
+  fwss_diamond_delegate_call: {
+    description:
+      "Delegate call made by the FWSS dispatcher or a nested migration. delegate_calldata is the raw ABI-encoded bytes. FWSS v1.5.0+.",
+    columns: {
+      delegate: { type: "hex" },
+      delegateCalldata: { type: "hex", note: "raw ABI-encoded bytes" },
+      logIndex: { type: "int", note: "raw receipt log index; orders nested delegate calls" },
+    },
+    indexes: ["delegate", "blockNumber"],
+  },
+  fwss_selector_delegated: {
+    description: "FWSS dispatcher selector route assigned to a delegate. FWSS v1.5.0+.",
+    columns: {
+      selector: { type: "hex", note: "4-byte function selector" },
+      delegate: { type: "hex" },
+      logIndex: { type: "int", note: "raw receipt log index; orders same-block events" },
+    },
+    indexes: ["selector", "delegate", "blockNumber"],
+  },
+  fwss_erc1967_upgraded: {
+    description: "ERC-1967 proxy implementation upgrade. FWSS v1.5.0+.",
+    columns: {
+      implementation: { type: "hex" },
+      logIndex: { type: "int", note: "raw receipt log index; orders same-block events" },
+    },
+    indexes: ["implementation", "blockNumber"],
   },
   fwss_pdp_payment_terminated: {
     description: "PDP storage payment rail terminated",
@@ -385,7 +444,7 @@ export const TABLES: Record<string, TableDef> = {
       token: { type: "hex" },
       from: { type: "hex" },
       to: { type: "hex" },
-      amount: { type: "bigint", note: "18 dec" },
+      amount: { type: "bigint", note: "base units of this row's token" },
     },
     indexes: ["to", "from", "blockNumber"],
   },
@@ -395,7 +454,7 @@ export const TABLES: Record<string, TableDef> = {
       token: { type: "hex" },
       from: { type: "hex" },
       to: { type: "hex" },
-      amount: { type: "bigint", note: "18 dec" },
+      amount: { type: "bigint", note: "base units of this row's token" },
     },
     indexes: ["from", "blockNumber"],
   },
@@ -454,7 +513,7 @@ export const TABLES: Record<string, TableDef> = {
     indexes: ["railId"],
   },
   fp_burn_for_fees: {
-    description: "FIL burned via fee auction. No event - row exists because the tx called burnForFees on FilecoinPay. requestedAmount comes from decoded input (USDFC claimed). For the FIL burned and the caller, JOIN tx_meta USING (tx_hash): tx_meta.tx_value is the FIL sent (= burned), tx_meta.tx_from is the caller.",
+    description: "FIL burned via FilecoinPay.burnForFees (decoded transaction, not an event). requested_amount is in base units of the claimed token. JOIN tx_meta USING (tx_hash) for FIL sent (tx_value in attoFIL) and caller (tx_from).",
     columns: {
       token: { type: "hex" },
       recipient: { type: "hex" },

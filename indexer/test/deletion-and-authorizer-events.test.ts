@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { decodeEventLog, encodeAbiParameters, encodeEventTopics } from "viem"
+import { decodeEventLog, encodeAbiParameters, encodeEventTopics, getAddress } from "viem"
 import { FilecoinWarmStorageServiceAbi } from "../abis/FilecoinWarmStorageService.ts"
 import { PDPVerifierAbi } from "../abis/PDPVerifier.ts"
 
@@ -46,4 +46,54 @@ test("FWSS ABI decodes DataSetAuthorizerSet", () => {
   assert.equal(decoded.eventName, "DataSetAuthorizerSet")
   assert.equal(decoded.args.dataSetId, 12n)
   assert.equal(decoded.args.authorizer.toLowerCase(), authorizer)
+})
+
+test("FWSS ABI decodes storage terms registration", () => {
+  const storageTermsId = `0x${"cd".repeat(32)}` as `0x${string}`
+  const token = `0x${"ab".repeat(20)}` as `0x${string}`
+  const salt = `0x${"ef".repeat(32)}` as `0x${string}`
+  const topics = encodeEventTopics({
+    abi: FilecoinWarmStorageServiceAbi,
+    eventName: "StorageTermsRegistered",
+    args: { storageTermsId },
+  })
+  const storageTermsIdTopic = topics[1]
+  if (typeof storageTermsIdTopic !== "string") throw new Error("expected an encoded storage terms ID topic")
+  const data = encodeAbiParameters([{
+    type: "tuple",
+    components: [
+      { type: "address" },
+      { type: "uint8" },
+      { type: "bytes32" },
+      { type: "uint96" },
+    ],
+  }], [[token, 6, salt, 2_500_000n]])
+
+  const decoded = decodeEventLog({
+    abi: FilecoinWarmStorageServiceAbi,
+    data,
+    topics: [topics[0], storageTermsIdTopic],
+  })
+  assert.equal(decoded.eventName, "StorageTermsRegistered")
+  assert.equal(decoded.args.storageTermsId, storageTermsId)
+  assert.deepEqual(decoded.args.terms, {
+    token: getAddress(token),
+    tokenDecimals: 6,
+    salt,
+    pricePerTiBPerMonth: 2_500_000n,
+  })
+})
+
+test("FWSS ABI includes v1.5 dispatcher and v1.6 storage terms events", () => {
+  const eventNames = new Set(
+    (FilecoinWarmStorageServiceAbi as readonly { type: string; name?: string }[])
+      .filter((item) => item.type === "event")
+      .map((item) => item.name),
+  )
+
+  assert(eventNames.has("DiamondDelegateCall"))
+  assert(eventNames.has("SelectorDelegated"))
+  assert(eventNames.has("Upgraded"))
+  assert(eventNames.has("StorageTermsDisabled"))
+  assert(eventNames.has("DataSetStorageTermsSelected"))
 })

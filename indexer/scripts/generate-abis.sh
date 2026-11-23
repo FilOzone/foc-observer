@@ -1,26 +1,21 @@
 #!/usr/bin/env bash
 #
-# Generate TypeScript ABI files from the FOC contract ABI sources.
-# Run from the ponder/ directory: ./scripts/generate-abis.sh [git-ref]
+# Generate TypeScript ABI files from deployed FOC contract releases.
+# Run from the indexer directory: ./scripts/generate-abis.sh [git-ref]
 #
-# Fetches .abi.json files from the filecoin-services GitHub repo and writes
-# TypeScript exports to abis/. Falls back to a local checkout if available.
+# The default is the deployed filecoin-services v1.6 release. Supplying a ref
+# regenerates every fetched ABI from that one ref, and a failed fetch stops the
+# script before it writes, so the generated ABIs always come from one ref.
 #
-# For FilecoinWarmStorageService we splice in events from internal libraries
-# (currently lib/Rails.sol) so Ponder subscribes to them at the FWSS proxy
-# address - libraries inline at the call site, so their events emit from the
-# FWSS proxy. abis/fwss-extra-events.json carries any further hand-maintained
-# entries (eg PricingUpdated retained as a legacy entry for FWSS deployments
-# still on v1.2.x).
-#
-# Default ref is pinned to the PR #596 head commit for the updated PDPVerifier
-# ABI. Switch it to a release tag once one containing the update is available.
+# FWSS keeps a union ABI. The deployed v1.6 ABI supplies its current events;
+# fwss-extra-events.json retains events emitted by historical FWSS and Storacha
+# deployments. SelectorDelegated is verified against the ERC-8167 revision
+# deployed with FWSS.
 #
 # Usage:
-#   ./scripts/generate-abis.sh              # Use default ref (pinned commit)
-#   ./scripts/generate-abis.sh v1.3.1       # Use a specific tag once available
-#   ./scripts/generate-abis.sh main         # Use latest from main branch
-#   ABI_REF=main ./scripts/generate-abis.sh # Via environment variable
+#   ./scripts/generate-abis.sh
+#   ./scripts/generate-abis.sh v1.6.0
+#   ABI_REF=v1.6.0 ./scripts/generate-abis.sh
 
 set -euo pipefail
 
@@ -30,15 +25,12 @@ ABI_DST="${PONDER_DIR}/abis"
 
 REPO="FilOzone/filecoin-services"
 ABI_PATH="service_contracts/abi"
-REF="${1:-${ABI_REF:-80264d627c3eaf02fdcf428c118a4aac98f0bd19}}"
+REF="${1:-${ABI_REF:-1134986cfd430c457d679c157191757e07d51e1f}}"
+ERC8167_REPO="wjmelements/erc8167"
+ERC8167_REF="44b41a1a94a491b54920ae8dd3c16aa974b6bf09"
 FWSS_EXTRAS="${ABI_DST}/fwss-extra-events.json"
 
-# Libraries whose events emit from the FWSS proxy at runtime. Their event
-# entries are folded into the FilecoinWarmStorageService ABI so Ponder
-# subscribes to them via the FWSS contract.
-FWSS_LIBS=(Rails)
-
-# Contracts we index (skip library/storage/error ABIs)
+# Contracts we index (skip library/storage/error ABIs).
 CONTRACTS=(
   PDPVerifier
   FilecoinWarmStorageService
@@ -49,23 +41,15 @@ CONTRACTS=(
 
 mkdir -p "$ABI_DST"
 
-# Try GitHub first, fall back to local checkout
 fetch_abi() {
   local contract="$1"
-  local url="https://raw.githubusercontent.com/${REPO}/${REF}/${ABI_PATH}/${contract}.abi.json"
+  curl -fsSL "https://raw.githubusercontent.com/${REPO}/${REF}/${ABI_PATH}/${contract}.abi.json"
+}
 
-  if curl -sf "$url" 2>/dev/null; then
-    return 0
-  fi
-
-  # Fall back to local path (for development in the FOC monorepo)
-  local local_path="${PONDER_DIR}/../contracts/filecoin-services/${ABI_PATH}/${contract}.abi.json"
-  if [ -f "$local_path" ]; then
-    cat "$local_path"
-    return 0
-  fi
-
-  return 1
+verify_erc8167_selector_event() {
+  local source
+  source="$(curl -fsSL "https://raw.githubusercontent.com/${ERC8167_REPO}/${ERC8167_REF}/src/interfaces/IERC8167.sol")"
+  grep -Fq "event SelectorDelegated(bytes4 indexed selector, address indexed delegate);" <<<"$source"
 }
 
 # Merge event entries without duplicating signatures already present in the
@@ -90,42 +74,61 @@ merge_events() {
 
 echo "fetching ABIs from ${REPO}@${REF}"
 
+declare -A ABI_JSON
 for contract in "${CONTRACTS[@]}"; do
-  dst="$ABI_DST/${contract}.ts"
-
-  abi_json=$(fetch_abi "$contract") || {
-    echo "warning: ${contract}.abi.json not found at ref '${REF}' or locally, skipping"
-    continue
+  if ! abi_json="$(fetch_abi "$contract")"; then
+    echo "error: ${contract}.abi.json is unavailable at ${REPO}@${REF}" >&2
+    exit 1
+  fi
+  ABI_JSON["$contract"]="$abi_json"
+  jq -e 'type == "array"' >/dev/null <<<"${ABI_JSON[$contract]}" || {
+    echo "error: ${contract}.abi.json at ${REPO}@${REF} is not an ABI array" >&2
+    exit 1
   }
+done
+
+if ! verify_erc8167_selector_event; then
+  echo "error: SelectorDelegated is unavailable at ${ERC8167_REPO}@${ERC8167_REF}" >&2
+  exit 1
+fi
+
+jq -e 'type == "array"' "$FWSS_EXTRAS" >/dev/null || {
+  echo "error: ${FWSS_EXTRAS} is not an ABI array" >&2
+  exit 1
+}
+
+jq -e '
+  . as $extras
+  | ["CDNPaymentTerminated", "ContractUpgraded", "FilecoinServiceDeployed", "PricingUpdated", "Upgraded", "ViewContractSet", "SelectorDelegated"]
+  | all(.[]; . as $name | any($extras[]; .type == "event" and .name == $name))
+' "$FWSS_EXTRAS" >/dev/null || {
+  echo "error: ${FWSS_EXTRAS} is missing a required historical FWSS event" >&2
+  exit 1
+}
+
+tmp_dir="$(mktemp -d "${ABI_DST}/.generate-abis.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+for contract in "${CONTRACTS[@]}"; do
+  abi_json="${ABI_JSON[$contract]}"
 
   if [ "$contract" = "FilecoinWarmStorageService" ]; then
-    spliced=0
-    # Fold in events from FWSS-internal libraries.
-    for lib in "${FWSS_LIBS[@]}"; do
-      lib_json=$(fetch_abi "$lib") || {
-        echo "warning: ${lib}.abi.json not found at ref '${REF}' or locally, skipping library splice"
-        continue
-      }
-      lib_events=$(jq '[.[] | select(.type == "event")]' <<<"$lib_json")
-      before=$(jq 'length' <<<"$abi_json")
-      abi_json=$(merge_events "$lib_events" <<<"$abi_json")
-      after=$(jq 'length' <<<"$abi_json")
-      spliced=$((spliced + after - before))
-    done
-    # Hand-maintained extras (eg legacy events retained for older deployments).
-    if [ -f "$FWSS_EXTRAS" ]; then
-      extras=$(jq 'map(del(._comment))' "$FWSS_EXTRAS")
-      before=$(jq 'length' <<<"$abi_json")
-      abi_json=$(merge_events "$extras" <<<"$abi_json")
-      after=$(jq 'length' <<<"$abi_json")
-      spliced=$((spliced + after - before))
-    fi
-    echo "  ${contract} (+ ${spliced} spliced events)"
+    extras="$(jq 'map(del(._comment))' "$FWSS_EXTRAS")"
+    before="$(jq 'length' <<<"$abi_json")"
+    abi_json="$(merge_events "$extras" <<<"$abi_json")"
+    after="$(jq 'length' <<<"$abi_json")"
+    echo "  ${contract} (+ $((after - before)) historical events)"
   else
     echo "  ${contract}"
   fi
 
-  echo "export const ${contract}Abi = ${abi_json} as const" > "$dst"
+  printf 'export const %sAbi = %s as const\n' "$contract" "$abi_json" > "${tmp_dir}/${contract}.ts"
 done
 
-echo "done: $(ls "$ABI_DST"/*.ts 2>/dev/null | wc -l) ABI files generated (ref: ${REF})"
+for contract in "${CONTRACTS[@]}"; do
+  mv "${tmp_dir}/${contract}.ts" "${ABI_DST}/${contract}.ts"
+done
+
+rmdir "$tmp_dir"
+trap - EXIT
+echo "done: ${#CONTRACTS[@]} ABI files generated (filecoin-services: ${REF}; erc8167: ${ERC8167_REF})"

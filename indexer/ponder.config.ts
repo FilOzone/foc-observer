@@ -87,6 +87,22 @@ export default createConfig({
       startBlock: network.FWSS_V1_4_BLOCK,
       includeTransactionReceipts: true,
     },
+    // v1.5.0 dispatcher events (DiamondDelegateCall, SelectorDelegated, Upgraded).
+    FWSSV15: {
+      abi: FilecoinWarmStorageServiceAbi,
+      chain: networkName,
+      address: network.FWSS,
+      startBlock: network.FWSS_V1_5_BLOCK,
+      includeTransactionReceipts: true,
+    },
+    // v1.6.0 storage terms events.
+    FWSSV16: {
+      abi: FilecoinWarmStorageServiceAbi,
+      chain: networkName,
+      address: network.FWSS,
+      startBlock: network.FWSS_V1_6_BLOCK,
+      includeTransactionReceipts: true,
+    },
     FilecoinPay: {
       abi: FilecoinPayV1Abi,
       chain: networkName,

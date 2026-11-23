@@ -1,6 +1,6 @@
 {
   "name": "@filoz/foc-observer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP stdio server and CLI for querying FOC (Filecoin Onchain Cloud) historical and live chain data and DealBot data.",
   "author": "Rod Vagg <rod@vagg.org>",
   "license": "Apache-2.0 OR MIT",
@@ -33,8 +33,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "commander": "^15.0.0",
-    "zod": "^4.3.6"
+    "commander": "^15.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

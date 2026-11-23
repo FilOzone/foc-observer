@@ -105,7 +105,7 @@ curl https://your-server.example.com/metrics/providers/mainnet?hours=72
 | Proving Health | `get_proving_health`, `get_proving_dataset` | Indexed PDPVerifier events |
 | Proving cross-check | `get_proving_health_goldsky`, `get_proving_dataset_goldsky` | PDP Explorer subgraph (Goldsky) |
 
-Analytical tools require the agent to call `get_system_context` first and pass `i_have_read_the_system_context: true`, confirming it has the protocol knowledge to interpret results.
+Analytical tools require `i_have_read_the_system_context: true`. Call `get_system_context` first with `{}` to receive the complete protocol and data-interpretation guide. Use `list_tables` and `describe_table` for the database schema and field units.
 
 ## Security model
 

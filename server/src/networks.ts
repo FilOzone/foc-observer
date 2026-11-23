@@ -9,7 +9,6 @@ export type NetworkName = "calibnet" | "mainnet"
 export interface ContractAddresses {
   pdpVerifier: `0x${string}`
   fwss: `0x${string}`
-  fwssStateView: `0x${string}`
   filecoinPay: `0x${string}`
   spRegistry: `0x${string}`
   sessionKeyRegistry: `0x${string}`
@@ -29,7 +28,7 @@ export interface NetworkConfig {
   contracts: ContractAddresses
 }
 
-// v1.1.0 deployment addresses from filecoin-services deployments.json
+// v1.6.0 deployment addresses from filecoin-services deployments.json
 const DEFAULTS: Record<NetworkName, NetworkConfig> = {
   calibnet: {
     name: "calibnet",
@@ -42,7 +41,6 @@ const DEFAULTS: Record<NetworkName, NetworkConfig> = {
     contracts: {
       pdpVerifier: "0x85e366Cf9DD2c0aE37E963d9556F5f4718d6417C",
       fwss: "0x02925630df557F957f70E112bA06e50965417CA0",
-      fwssStateView: "0x53d235D474585EC102ccaB7e0cdcE951dD00f716",
       filecoinPay: "0x09a0fDc2723fAd1A7b8e3e00eE5DF73841df55a0",
       spRegistry: "0x839e5c9988e4e9977d40708d0094103c0839Ac9D",
       sessionKeyRegistry: "0x518411c2062E119Aaf7A8B12A2eDf9a939347655",
@@ -60,7 +58,6 @@ const DEFAULTS: Record<NetworkName, NetworkConfig> = {
     contracts: {
       pdpVerifier: "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F",
       fwss: "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
-      fwssStateView: "0x638a4986332bF9B889E5D7435B966C5ecdE077Fa",
       filecoinPay: "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa",
       spRegistry: "0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB",
       sessionKeyRegistry: "0x74FD50525A958aF5d484601E252271f9625231aB",

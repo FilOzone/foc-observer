@@ -34,7 +34,7 @@ npm start        # Starts on FOC_SERVER_PORT (requires Postgres, Lotus, .env con
 | `src/mcp-handler.ts` | 20 MCP tools via `registerTool()` |
 | `src/routes.ts` | REST API endpoints |
 | `src/ponder-client.ts` | Postgres queries with SQL validation and security |
-| `src/contract-reader.ts` | Live contract reads via viem (eth_call) |
+| `src/contract-reader.ts` | Live contract reads via viem (`eth_call` to deployed proxies) |
 | `src/betterstack-client.ts` | BetterStack ClickHouse queries for DealBot metrics |
 | `src/subgraph-client.ts` | Goldsky PDP Explorer subgraph queries |
 | `src/networks.ts` | Network config with env var overrides |

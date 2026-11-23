@@ -7,13 +7,9 @@
  */
 
 import { describe, expect, test } from "vitest"
-import { TABLES, STANDARD_COLUMNS, formatTableList, tableCount } from "../src/table-metadata.js"
+import { TABLES, STANDARD_COLUMNS } from "../src/schema-defs.js"
 
 describe("table metadata", () => {
-  test("has tables defined", () => {
-    expect(tableCount()).toBeGreaterThan(30)
-  })
-
   test("every table has a description", () => {
     for (const [name, def] of Object.entries(TABLES)) {
       expect(def.description, `${name} missing description`).toBeTruthy()
@@ -44,14 +40,6 @@ describe("table metadata", () => {
         expect(tableCols.has(idx), `${name} indexes "${idx}" which is not a column`).toBe(true)
       }
     }
-  })
-
-  test("formatTableList produces non-empty output", () => {
-    const list = formatTableList()
-    expect(list.length).toBeGreaterThan(500)
-    expect(list).toContain("fp_rail_settled")
-    expect(list).toContain("fwss_piece_added")
-    expect(list).toContain("pdp_possession_proven")
   })
 
   test("table names use snake_case", () => {
