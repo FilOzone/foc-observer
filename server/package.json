@@ -16,15 +16,15 @@
     "@hono/node-server": "^2.1.8",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "hono": "^4",
-    "libpg-query": "^18.2.1",
+    "libpg-query": "^18.2.4",
     "pg": "^8.23.1",
-    "viem": "^2.57.11",
+    "viem": "^2.57.20",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }
