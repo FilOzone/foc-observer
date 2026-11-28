@@ -4,33 +4,29 @@
  * No live server needed, mocks the MCP Client.
  */
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { describe, expect, test, vi } from "vitest"
+import { callTool } from "../src/mcp-client.js"
 
-// We can't easily mock the SDK's Client class for callTool, but we can
-// test the response parsing logic by extracting it. Since callTool is
-// small, we replicate its logic here for direct testing.
-
-function parseToolResult(result: { content?: unknown; isError?: boolean }): unknown {
-  const content = result.content as Array<{ type: string; text?: string }> | undefined
-  const firstText = content?.find((c) => c.type === "text")?.text
-  if (result.isError) {
-    throw new Error(firstText ?? "Unknown error")
-  }
-  return JSON.parse(firstText ?? "{}")
+function callToolWithResult(result: Partial<CallToolResult>): Promise<unknown> {
+  const client = new Client({ name: "test", version: "1.0.0" })
+  vi.spyOn(client, "callTool").mockResolvedValue(result as CallToolResult)
+  return callTool(client, "get_status")
 }
 
 describe("callTool response parsing", () => {
-  test("extracts JSON from text content", () => {
-    const result = parseToolResult({
+  test("extracts JSON from text content", async () => {
+    const result = await callToolWithResult({
       content: [{ type: "text", text: '{"network":"mainnet","providers":[]}' }],
     })
     expect(result).toEqual({ network: "mainnet", providers: [] })
   })
 
-  test("handles multiple content items, picks first text", () => {
-    const result = parseToolResult({
+  test("handles multiple content items, picks first text", async () => {
+    const result = await callToolWithResult({
       content: [
-        { type: "image", text: "not this" },
+        { type: "image", data: "", mimeType: "image/png" },
         { type: "text", text: '{"value":42}' },
         { type: "text", text: '{"value":99}' },
       ],
@@ -38,32 +34,32 @@ describe("callTool response parsing", () => {
     expect(result).toEqual({ value: 42 })
   })
 
-  test("returns empty object for missing content", () => {
-    expect(parseToolResult({})).toEqual({})
-    expect(parseToolResult({ content: [] })).toEqual({})
+  test("returns empty object for missing content", async () => {
+    await expect(callToolWithResult({})).resolves.toEqual({})
+    await expect(callToolWithResult({ content: [] })).resolves.toEqual({})
   })
 
-  test("throws on error result with message", () => {
-    expect(() => parseToolResult({
+  test("throws on error result with message", async () => {
+    await expect(callToolWithResult({
       content: [{ type: "text", text: "Error: table not found" }],
       isError: true,
-    })).toThrow("Error: table not found")
+    })).rejects.toThrow("Error: table not found")
   })
 
-  test("throws generic message on error without text", () => {
-    expect(() => parseToolResult({ isError: true })).toThrow("Unknown error")
-    expect(() => parseToolResult({ content: [], isError: true })).toThrow("Unknown error")
+  test("throws generic message on error without text", async () => {
+    await expect(callToolWithResult({ isError: true })).rejects.toThrow("Unknown error")
+    await expect(callToolWithResult({ content: [], isError: true })).rejects.toThrow("Unknown error")
   })
 
-  test("handles nested JSON with bigint strings", () => {
-    const result = parseToolResult({
+  test("handles nested JSON with bigint strings", async () => {
+    const result = await callToolWithResult({
       content: [{ type: "text", text: '{"amount":"1000000000000000000","rate":"694444444444"}' }],
     })
     expect(result).toEqual({ amount: "1000000000000000000", rate: "694444444444" })
   })
 
-  test("handles array results", () => {
-    const result = parseToolResult({
+  test("handles array results", async () => {
+    const result = await callToolWithResult({
       content: [{ type: "text", text: '[{"name":"calibnet"},{"name":"mainnet"}]' }],
     })
     expect(result).toEqual([{ name: "calibnet" }, { name: "mainnet" }])
