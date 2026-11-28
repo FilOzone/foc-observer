@@ -79,7 +79,13 @@ program
       const result = await callToolAndClose("query_sql", { ...AFFIRM, network: opts.network, sql }) as Record<string, unknown>
       if (opts.json) {
         console.log(stringifyTerminalSafeJson(result))
-      } else if ((result.rowCount as number) === 0) {
+        return
+      }
+      const notices = result.notices as string[] | undefined
+      for (const notice of notices ?? []) {
+        console.error(`Notice: ${escapeTerminalText(notice)}`)
+      }
+      if ((result.rowCount as number) === 0) {
         console.log(`[${escapeTerminalText(opts.network)}] (no rows)`)
       } else {
         console.log(`[${escapeTerminalText(opts.network)}]`)
