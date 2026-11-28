@@ -138,6 +138,7 @@ program
         console.log(stringifyTerminalSafeJson(result))
         return
       }
+      if (typeof result.error === "string") throw new Error(result.error)
       const columns = result.columns as Array<{ name: string; type: string; nullable: boolean }>
       const nameW = Math.max("Column".length, ...columns.map((c) => formatTerminalValue(c.name).length))
       const typeW = Math.max("Type".length, ...columns.map((c) => formatTerminalValue(c.type).length))
