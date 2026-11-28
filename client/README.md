@@ -100,7 +100,7 @@ foc-observer status
 # SQL query against indexed events
 foc-observer query -n mainnet "SELECT source, COUNT(*) FROM fwss_data_set_created GROUP BY source"
 
-# List tables and row counts
+# List tables and estimated row counts
 foc-observer tables -n mainnet
 
 # Describe a table's columns
@@ -119,6 +119,8 @@ foc-observer rail -n mainnet 100
 # Current FWSS version, token, storage price and per-dataset monthly fee
 foc-observer pricing -n mainnet
 ```
+
+Row counts in `tables` and `status` are PostgreSQL planner estimates.
 
 All commands support `--json` for machine-readable output. JSON escapes terminal control and bidirectional-format characters while preserving the decoded values.
 
