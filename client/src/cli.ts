@@ -94,7 +94,7 @@ program
 
 program
   .command("tables")
-  .description("List all FOC event tables with row counts")
+  .description("List all FOC event tables with estimated row counts")
   .option("-n, --network <network>", "Network: calibnet or mainnet", resolveNetwork())
   .option("--json", "Output JSON")
   .action(async (opts) => {
@@ -107,9 +107,10 @@ program
       }
       const tables = result.tables as Array<{ name: string; rowCount: number; description: string }>
       const nameW = Math.max("Table".length, ...tables.map((t) => formatTerminalValue(t.name).length))
-      const countW = Math.max("Rows".length, ...tables.map((t) => formatTerminalValue(t.rowCount).length))
+      const countLabel = "Est. rows"
+      const countW = Math.max(countLabel.length, ...tables.map((t) => formatTerminalValue(t.rowCount).length))
       console.log(`[${escapeTerminalText(opts.network)}]`)
-      console.log(`${"Table".padEnd(nameW)} | ${"Rows".padStart(countW)} | Description`)
+      console.log(`${"Table".padEnd(nameW)} | ${countLabel.padStart(countW)} | Description`)
       console.log(`${"-".repeat(nameW)}-+-${"-".repeat(countW)}-+-${"-".repeat(40)}`)
       for (const t of tables) {
         console.log(`${formatTerminalValue(t.name).padEnd(nameW)} | ${formatTerminalValue(t.rowCount).padStart(countW)} | ${formatTerminalValue(t.description)}`)
@@ -118,7 +119,7 @@ program
       const total = rowCounts.every((count) => typeof count === "number" && Number.isFinite(count))
         ? rowCounts.reduce((sum, count) => sum + count, 0)
         : null
-      console.log(`\n${tables.length} tables, ${total === null ? "unknown" : formatCount(total)} total rows`)
+      console.log(`\n${tables.length} tables, ${total === null ? "unknown" : formatCount(total)} estimated rows`)
     } catch (err) {
       console.error(`Error: ${escapeTerminalText(err instanceof Error ? err.message : String(err))}`)
       process.exit(1)
@@ -170,7 +171,7 @@ program
         if (!s.reachable) {
           console.log(`[${formatTerminalValue(s.network ?? s.name)}] not reachable (${formatTerminalValue(s.error)})`)
         } else {
-          console.log(`[${formatTerminalValue(s.network ?? s.name)}] ${formatTerminalValue(s.tables)} tables | ${Number(s.totalRows).toLocaleString()} rows`)
+          console.log(`[${formatTerminalValue(s.network ?? s.name)}] ${formatTerminalValue(s.tables)} tables | ${Number(s.totalRows).toLocaleString()} estimated rows`)
         }
       }
     } catch (err) {
